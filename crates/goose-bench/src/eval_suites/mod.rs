@@ -2,6 +2,7 @@ mod core;
 mod evaluation;
 mod factory;
 mod metrics;
+mod security;
 mod utils;
 mod vibes;
 

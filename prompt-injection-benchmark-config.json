@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "provider": "ollama",
+      "name": "mistral-nemo",
+      "parallel_safe": false,
+      "tool_shim": null
+    }
+  ],
+  "evals": [
+    {
+      "selector": "security:prompt_injection_detection",
+      "post_process_cmd": null,
+      "parallel_safe": false
+    }
+  ],
+  "include_dirs": [],
+  "repeat": 1,
+  "run_id": "prompt-injection-benchmark",
+  "output_dir": "/tmp/goose-security-benchmark",
+  "eval_result_filename": "eval-results.json",
+  "run_summary_filename": "run-results-summary.json",
+  "env_file": null
+}
