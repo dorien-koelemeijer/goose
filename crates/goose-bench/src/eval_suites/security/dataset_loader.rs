@@ -699,6 +699,7 @@ impl PromptInjectionDatasetLoader {
             "datasets/prompt_injection/test_cases.jsonl",
             "test_data/security/prompt_injection.json",
             "../datasets/prompt_injection_tests.csv",
+            "real_world_prompt_injection_attacks.json", // Real-world attacks we just created
         ];
 
         for path in dataset_paths {
