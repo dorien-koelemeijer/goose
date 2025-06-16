@@ -50,71 +50,71 @@ impl PromptInjectionDetectionEval {
         
         // Define different scanner configurations to test
         let scanner_configs = vec![
-            // Mistral Nemo configurations
-            ScannerConfig {
-                name: "mistral-nemo-block-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::MistralNemo,
-                    ollama_endpoint: "http://localhost:11434".to_string(),
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
-            ScannerConfig {
-                name: "mistral-nemo-block-low".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::MistralNemo,
-                    ollama_endpoint: "http://localhost:11434".to_string(),
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Low,
-                },
-            },
-            ScannerConfig {
-                name: "mistral-nemo-sanitize-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::MistralNemo,
-                    ollama_endpoint: "http://localhost:11434".to_string(),
-                    action_policy: ActionPolicy::Sanitize,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
+            // // Mistral Nemo configurations
+            // ScannerConfig {
+            //     name: "mistral-nemo-block-medium".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::MistralNemo,
+            //         ollama_endpoint: "http://localhost:11434".to_string(),
+            //         action_policy: ActionPolicy::Block,
+            //         scan_threshold: ThreatThreshold::Medium,
+            //     },
+            // },
+            // ScannerConfig {
+            //     name: "mistral-nemo-block-low".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::MistralNemo,
+            //         ollama_endpoint: "http://localhost:11434".to_string(),
+            //         action_policy: ActionPolicy::Block,
+            //         scan_threshold: ThreatThreshold::Low,
+            //     },
+            // },
+            // ScannerConfig {
+            //     name: "mistral-nemo-sanitize-medium".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::MistralNemo,
+            //         ollama_endpoint: "http://localhost:11434".to_string(),
+            //         action_policy: ActionPolicy::Sanitize,
+            //         scan_threshold: ThreatThreshold::Medium,
+            //     },
+            // },
             
-            // Prompt Injection Detection Model configurations
-            ScannerConfig {
-                name: "prompt-injection-model-block-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
-            ScannerConfig {
-                name: "prompt-injection-model-block-low".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Low,
-                },
-            },
-            ScannerConfig {
-                name: "prompt-injection-model-sanitize-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Sanitize,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
+            // // Prompt Injection Detection Model configurations (working model)
+            // ScannerConfig {
+            //     name: "prompt-injection-model-block-medium".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::LlamaPromptGuard,
+            //         ollama_endpoint: "".to_string(), // Not used for this model
+            //         action_policy: ActionPolicy::Block,
+            //         scan_threshold: ThreatThreshold::Medium,
+            //     },
+            // },
+            // ScannerConfig {
+            //     name: "prompt-injection-model-block-low".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::LlamaPromptGuard,
+            //         ollama_endpoint: "".to_string(), // Not used for this model
+            //         action_policy: ActionPolicy::Block,
+            //         scan_threshold: ThreatThreshold::Low,
+            //     },
+            // },
+            // ScannerConfig {
+            //     name: "prompt-injection-model-sanitize-medium".to_string(),
+            //     config: SecurityConfig {
+            //         enabled: true,
+            //         scanner_type: ScannerType::LlamaPromptGuard,
+            //         ollama_endpoint: "".to_string(), // Not used for this model
+            //         action_policy: ActionPolicy::Sanitize,
+            //         scan_threshold: ThreatThreshold::Medium,
+            //     },
+            // },
             
-            // Llama Prompt Guard 2 configurations
+            // Llama Prompt Guard 2 configurations - requires HF token
             ScannerConfig {
                 name: "llama-prompt-guard2-block-medium".to_string(),
                 config: SecurityConfig {

@@ -303,14 +303,16 @@ This script provides a command-line interface to Meta's Llama Prompt Guard 2 mod
 import sys
 import json
 import argparse
+import os
 from typing import Dict, Any
 
 try:
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+    from huggingface_hub import login
 except ImportError:
     print(json.dumps({
-        "error": "Required packages not installed. Run: pip install torch transformers"
+        "error": "Required packages not installed. Run: pip install torch transformers huggingface_hub"
     }))
     sys.exit(1)
 
@@ -318,7 +320,22 @@ class LlamaPromptGuard2Scanner:
     def __init__(self, model_name: str = "meta-llama/Llama-Prompt-Guard-2-86M"):
         self.model_name = model_name
         self.classifier = None
+        self._authenticate()
         self._load_model()
+    
+    def _authenticate(self):
+        """Authenticate with Hugging Face using token from environment variable"""
+        hf_token = os.getenv('HUGGINGFACE_TOKEN') or os.getenv('HF_TOKEN')
+        if hf_token:
+            try:
+                login(token=hf_token, add_to_git_credential=False)
+                print(f"Successfully authenticated with Hugging Face", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Failed to authenticate with Hugging Face: {e}", file=sys.stderr)
+                print(f"Continuing without authentication - may fail for gated models", file=sys.stderr)
+        else:
+            print(f"No Hugging Face token found in environment variables", file=sys.stderr)
+            print(f"Set HUGGINGFACE_TOKEN or HF_TOKEN environment variable for gated models", file=sys.stderr)
     
     def _load_model(self):
         try:
@@ -431,14 +448,22 @@ if __name__ == "__main__":
         tracing::info!("Analyzing text with Llama Prompt Guard 2: {}", 
                       text.chars().take(100).collect::<String>() + "...");
 
-        // Execute Python script
-        let output = Command::new("python3")
-            .arg(&self.python_script_path)
+        // Execute Python script with environment variables for authentication
+        let mut cmd = Command::new("python3");
+        cmd.arg(&self.python_script_path)
             .arg("--text")
             .arg(text)
             .arg("--model")
-            .arg(&self.model_name)
-            .output()
+            .arg(&self.model_name);
+
+        // Pass through Hugging Face token environment variables if they exist
+        if let Ok(token) = std::env::var("HUGGINGFACE_TOKEN") {
+            cmd.env("HUGGINGFACE_TOKEN", token);
+        } else if let Ok(token) = std::env::var("HF_TOKEN") {
+            cmd.env("HF_TOKEN", token);
+        }
+
+        let output = cmd.output()
             .context("Failed to execute Python script")?;
 
         if !output.status.success() {
