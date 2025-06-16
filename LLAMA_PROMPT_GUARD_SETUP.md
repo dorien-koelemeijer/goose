@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-To use Llama Prompt Guard in the benchmarking system, you need to install Python dependencies:
+To use Llama Prompt Guard in the benchmarking system, install Python dependencies:
 
 ```bash
 # Create a virtual environment (recommended)
@@ -23,30 +23,24 @@ pip install torch transformers
 
 ## Model Access
 
-Llama Prompt Guard 2 requires approval from Meta. To get access:
-
-1. Go to https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M
-2. Click "Request access to this model"
-3. Fill out the form and wait for approval
-4. Once approved, authenticate with HuggingFace CLI:
-   ```bash
-   pip install huggingface_hub
-   huggingface-cli login
-   ```
+The system uses ProtectAI's DeBERTa model which is publicly available:
+- Model: `protectai/deberta-v3-base-prompt-injection-v2`
+- No authentication or approval required
+- Automatically downloaded on first use
 
 ## Testing the Setup
 
-You can test if Llama Prompt Guard is working:
+Test if the prompt injection detection model is working:
 
 ```bash
 # Test the Python script directly
 python3 -c "
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-print('Loading Llama Prompt Guard...')
-tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-Prompt-Guard-2-86M')
-model = AutoModelForSequenceClassification.from_pretrained('meta-llama/Llama-Prompt-Guard-2-86M')
-print('✅ Llama Prompt Guard loaded successfully!')
+print('Loading ProtectAI prompt injection detection model...')
+tokenizer = AutoTokenizer.from_pretrained('protectai/deberta-v3-base-prompt-injection-v2')
+model = AutoModelForSequenceClassification.from_pretrained('protectai/deberta-v3-base-prompt-injection-v2')
+print('✅ Prompt injection detection model loaded successfully!')
 "
 ```
 
@@ -59,43 +53,40 @@ cd /Users/dkoelemeijer/Development/goose
 cargo run --bin goose -- bench run --config prompt-injection-benchmark-config.json
 ```
 
-This will now test **6 configurations**:
+This will now test **9 configurations**:
 - 3 Mistral Nemo configurations (via Ollama)
-- 3 Llama Prompt Guard configurations (via Python/HuggingFace)
+- 3 ProtectAI DeBERTa configurations (via Python/HuggingFace)
+- 3 Llama Prompt Guard 2 configurations (via Python/HuggingFace)
 
 ## Expected Results
 
-You should see output like:
+Expected output:
 
 ```
 Testing scanner configuration: mistral-nemo-block-medium
 Testing scanner configuration: mistral-nemo-block-low
 Testing scanner configuration: mistral-nemo-sanitize-medium
-Testing scanner configuration: llama-prompt-guard-block-medium
-Testing scanner configuration: llama-prompt-guard-block-low
-Testing scanner configuration: llama-prompt-guard-sanitize-medium
+Testing scanner configuration: prompt-injection-model-block-medium
+Testing scanner configuration: prompt-injection-model-block-low
+Testing scanner configuration: prompt-injection-model-sanitize-medium
+Testing scanner configuration: llama-prompt-guard2-block-medium
+Testing scanner configuration: llama-prompt-guard2-block-low
+Testing scanner configuration: llama-prompt-guard2-sanitize-medium
 ```
 
 The results will include side-by-side comparison of:
 - Accuracy, Precision, Recall, F1 scores
-- Speed (Llama Prompt Guard should be much faster)
+- Speed (specialized models should be much faster than Mistral Nemo)
 - Per-test-case results for detailed analysis
 
 ## Troubleshooting
-
-### "Model not found" error
-- Ensure you have access to the model on HuggingFace
-- Run `huggingface-cli login` and enter your token
 
 ### "torch not found" error
 - Install PyTorch: `pip install torch`
 - For GPU support: `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`
 
 ### Python script execution fails
-- Ensure `python3` is in your PATH
+- Ensure `python3` is in the PATH
 - Try using `python` instead of `python3` on some systems
 - Check that the virtual environment is activated
 
-### Permission denied
-- The Python script should be automatically created with execute permissions
-- If not, run: `chmod +x /path/to/script.py`

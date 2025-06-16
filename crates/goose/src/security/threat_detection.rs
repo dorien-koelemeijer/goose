@@ -277,6 +277,256 @@ impl ContentScanner for MistralNemoScanner {
     }
 }
 
+pub struct LlamaPromptGuard2Scanner {
+    model_name: String,
+    python_script_path: String,
+}
+
+impl LlamaPromptGuard2Scanner {
+    pub fn new() -> Self {
+        Self {
+            model_name: "meta-llama/Llama-Prompt-Guard-2-86M".to_string(),
+            python_script_path: Self::create_python_script().unwrap_or_else(|e| {
+                tracing::error!("Failed to create Python script for Llama Prompt Guard 2: {}", e);
+                "llama_prompt_guard2_scanner.py".to_string()
+            }),
+        }
+    }
+
+    fn create_python_script() -> Result<String> {
+        let script_content = r#"#!/usr/bin/env python3
+"""
+Llama Prompt Guard 2 Scanner for Goose Security System
+This script provides a command-line interface to Meta's Llama Prompt Guard 2 model.
+"""
+
+import sys
+import json
+import argparse
+from typing import Dict, Any
+
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+except ImportError:
+    print(json.dumps({
+        "error": "Required packages not installed. Run: pip install torch transformers"
+    }))
+    sys.exit(1)
+
+class LlamaPromptGuard2Scanner:
+    def __init__(self, model_name: str = "meta-llama/Llama-Prompt-Guard-2-86M"):
+        self.model_name = model_name
+        self.classifier = None
+        self._load_model()
+    
+    def _load_model(self):
+        try:
+            device = 0 if torch.cuda.is_available() else -1
+            self.classifier = pipeline(
+                "text-classification",
+                model=self.model_name,
+                tokenizer=self.model_name,
+                device=device,
+                top_k=None,  # Get all class probabilities
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model {self.model_name}: {e}")
+    
+    def scan_text(self, text: str) -> Dict[str, Any]:
+        try:
+            # Get model prediction
+            outputs = self.classifier([text])
+            
+            if not outputs or not outputs[0]:
+                raise ValueError("No output from model")
+            
+            # outputs[0] is a list of dicts with 'label' and 'score'
+            result = outputs[0]
+            
+            # Find the prediction with highest score
+            if isinstance(result, list):
+                best_pred = max(result, key=lambda x: x['score'])
+            else:
+                best_pred = result
+            
+            label = best_pred['label']
+            confidence = best_pred['score']
+            
+            # Map Llama Prompt Guard 2 labels to our threat levels
+            # LABEL_0 = safe, LABEL_1 = injection (typically)
+            if 'LABEL_0' in label or 'safe' in label.lower():
+                threat_level = "Safe"
+                explanation = f"Content appears safe (confidence: {confidence:.3f})"
+            else:
+                # Map confidence to threat levels for injections
+                if confidence >= 0.9:
+                    threat_level = "High"
+                elif confidence >= 0.7:
+                    threat_level = "Medium"
+                else:
+                    threat_level = "Low"
+                explanation = f"Potential prompt injection detected (confidence: {confidence:.3f})"
+            
+            return {
+                "threat_level": threat_level,
+                "explanation": explanation,
+                "confidence": confidence,
+                "raw_label": label,
+                "sanitized_content": None  # Llama Prompt Guard 2 doesn't provide sanitization
+            }
+            
+        except Exception as e:
+            return {
+                "threat_level": "Medium",
+                "explanation": f"Error during analysis: {str(e)}",
+                "confidence": 0.0,
+                "raw_label": "error",
+                "sanitized_content": None
+            }
+
+def main():
+    parser = argparse.ArgumentParser(description="Llama Prompt Guard 2 Scanner")
+    parser.add_argument("--text", required=True, help="Text to analyze")
+    parser.add_argument("--model", default="meta-llama/Llama-Prompt-Guard-2-86M", help="Model name")
+    args = parser.parse_args()
+    
+    try:
+        scanner = LlamaPromptGuard2Scanner(args.model)
+        result = scanner.scan_text(args.text)
+        print(json.dumps(result))
+    except Exception as e:
+        print(json.dumps({
+            "threat_level": "Medium",
+            "explanation": f"Scanner initialization failed: {str(e)}",
+            "confidence": 0.0,
+            "raw_label": "error",
+            "sanitized_content": None
+        }))
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+"#;
+
+        let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
+        let script_path = temp_file.path().with_extension("py");
+        
+        fs::write(&script_path, script_content)
+            .context("Failed to write Python script")?;
+        
+        // Make the script executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script_path, perms)?;
+        }
+        
+        Ok(script_path.to_string_lossy().to_string())
+    }
+
+    async fn analyze_with_python(&self, text: &str) -> Result<ScanResult> {
+        tracing::info!("Analyzing text with Llama Prompt Guard 2: {}", 
+                      text.chars().take(100).collect::<String>() + "...");
+
+        // Execute Python script
+        let output = Command::new("python3")
+            .arg(&self.python_script_path)
+            .arg("--text")
+            .arg(text)
+            .arg("--model")
+            .arg(&self.model_name)
+            .output()
+            .context("Failed to execute Python script")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!("Python script failed: {}", stderr);
+            return Ok(ScanResult {
+                threat_level: ThreatLevel::Medium,
+                explanation: format!("Llama Prompt Guard 2 execution failed: {}", stderr),
+                sanitized_content: None,
+            });
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        tracing::info!("Llama Prompt Guard 2 raw response: {}", stdout);
+
+        // Parse JSON response
+        let analysis: Value = serde_json::from_str(&stdout)
+            .context("Failed to parse Python script output")?;
+
+        self.parse_analysis_result(analysis)
+    }
+
+    fn parse_analysis_result(&self, analysis: Value) -> Result<ScanResult> {
+        let threat_level_str = analysis
+            .get("threat_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Medium");
+
+        let explanation = analysis
+            .get("explanation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No explanation provided")
+            .to_string();
+
+        let threat_level = match threat_level_str.to_lowercase().as_str() {
+            "safe" => ThreatLevel::Safe,
+            "low" => ThreatLevel::Low,
+            "medium" => ThreatLevel::Medium,
+            "high" => ThreatLevel::High,
+            "critical" => ThreatLevel::Critical,
+            _ => ThreatLevel::Medium,
+        };
+
+        Ok(ScanResult {
+            threat_level,
+            explanation,
+            sanitized_content: None, // Llama Prompt Guard 2 doesn't provide sanitization
+        })
+    }
+}
+
+#[async_trait]
+impl ContentScanner for LlamaPromptGuard2Scanner {
+    async fn scan_content(&self, content: &[Content]) -> Result<ScanResult> {
+        let combined_content = content
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.analyze_with_python(&combined_content).await
+    }
+
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
+        // For tool results, we analyze the content with some context
+        let combined_content = result
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Add tool context to the analysis
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
+
+        self.analyze_with_python(&contextual_content).await
+    }
+}
+
 pub struct LlamaPromptGuardScanner {
     model_name: String,
     python_script_path: String,

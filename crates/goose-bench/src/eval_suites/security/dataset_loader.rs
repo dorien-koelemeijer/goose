@@ -847,18 +847,4 @@ impl PromptInjectionDatasetLoader {
 
         Ok(test_cases)
     }
-
-    /// Generate a sample dataset file for testing
-    pub fn generate_sample_dataset(path: &str) -> Result<()> {
-        let sample_cases = Self::load_builtin_test_cases()?;
-        let test_suite = PromptInjectionTestSuite {
-            test_cases: sample_cases,
-        };
-
-        let json_content = serde_json::to_string_pretty(&test_suite)?;
-        fs::write(path, json_content)?;
-
-        println!("Generated sample dataset at: {}", path);
-        Ok(())
-    }
 }

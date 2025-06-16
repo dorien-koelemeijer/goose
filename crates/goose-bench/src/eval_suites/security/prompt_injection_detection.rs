@@ -113,6 +113,38 @@ impl PromptInjectionDetectionEval {
                     scan_threshold: ThreatThreshold::Medium,
                 },
             },
+            
+            // Llama Prompt Guard 2 configurations
+            ScannerConfig {
+                name: "llama-prompt-guard2-block-medium".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard2,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Block,
+                    scan_threshold: ThreatThreshold::Medium,
+                },
+            },
+            ScannerConfig {
+                name: "llama-prompt-guard2-block-low".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard2,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Block,
+                    scan_threshold: ThreatThreshold::Low,
+                },
+            },
+            ScannerConfig {
+                name: "llama-prompt-guard2-sanitize-medium".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard2,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Sanitize,
+                    scan_threshold: ThreatThreshold::Medium,
+                },
+            },
         ];
 
         Self {

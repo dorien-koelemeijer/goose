@@ -11,7 +11,7 @@ use content_scanner::{ContentScanner, ScanResult, ThreatLevel};
 use mcp_core::Content;
 use serde_json::Value;
 use std::sync::Arc;
-use threat_detection::{MistralNemoScanner, LlamaPromptGuardScanner};
+use threat_detection::{MistralNemoScanner, LlamaPromptGuardScanner, LlamaPromptGuard2Scanner};
 
 pub struct SecurityManager {
     config: SecurityConfig,
@@ -46,6 +46,19 @@ impl SecurityManager {
                     );
                     Some(
                         Arc::new(LlamaPromptGuardScanner::new())
+                            as Arc<dyn ContentScanner>,
+                    )
+                }
+                ScannerType::LlamaPromptGuard2 => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        "Initializing Llama Prompt Guard 2 security scanner"
+                    );
+                    Some(
+                        Arc::new(LlamaPromptGuard2Scanner::new())
                             as Arc<dyn ContentScanner>,
                     )
                 }

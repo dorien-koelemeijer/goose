@@ -14,6 +14,7 @@ pub enum ScannerType {
     None,
     MistralNemo,
     LlamaPromptGuard,
+    LlamaPromptGuard2,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
