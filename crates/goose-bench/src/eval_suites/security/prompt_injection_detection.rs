@@ -90,37 +90,37 @@ impl PromptInjectionDetectionEval {
             //     },
             // },
 
-            // // Prompt Injection Detection Model configurations (working model)
-            // ScannerConfig {
-            //     name: "prompt-injection-model-block-medium".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::LlamaPromptGuard,
-            //         ollama_endpoint: "".to_string(), // Not used for this model
-            //         action_policy: ActionPolicy::Block,
-            //         scan_threshold: ThreatThreshold::Medium,
-            //     },
-            // },
-            // ScannerConfig {
-            //     name: "prompt-injection-model-block-low".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::LlamaPromptGuard,
-            //         ollama_endpoint: "".to_string(), // Not used for this model
-            //         action_policy: ActionPolicy::Block,
-            //         scan_threshold: ThreatThreshold::Low,
-            //     },
-            // },
-            // ScannerConfig {
-            //     name: "prompt-injection-model-sanitize-medium".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::LlamaPromptGuard,
-            //         ollama_endpoint: "".to_string(), // Not used for this model
-            //         action_policy: ActionPolicy::Sanitize,
-            //         scan_threshold: ThreatThreshold::Medium,
-            //     },
-            // },
+            // ProtectAI DeBERTa Model configurations (working model)
+            ScannerConfig {
+                name: "protectai-deberta-block-medium".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Block,
+                    scan_threshold: ThreatThreshold::Medium,
+                },
+            },
+            ScannerConfig {
+                name: "protectai-deberta-block-low".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Block,
+                    scan_threshold: ThreatThreshold::Low,
+                },
+            },
+            ScannerConfig {
+                name: "protectai-deberta-sanitize-medium".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::LlamaPromptGuard,
+                    ollama_endpoint: "".to_string(), // Not used for this model
+                    action_policy: ActionPolicy::Sanitize,
+                    scan_threshold: ThreatThreshold::Medium,
+                },
+            },
 
             // Llama Prompt Guard 2 configurations - requires HF token
             ScannerConfig {
