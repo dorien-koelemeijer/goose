@@ -3,8 +3,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use mcp_core::Content;
 use serde_json::Value;
-use std::process::Command;
 use std::fs;
+use std::process::Command;
 use tempfile::NamedTempFile;
 
 pub struct MistralNemoScanner {
@@ -287,7 +287,10 @@ impl LlamaPromptGuard2Scanner {
         Self {
             model_name: "meta-llama/Llama-Prompt-Guard-2-86M".to_string(),
             python_script_path: Self::create_python_script().unwrap_or_else(|e| {
-                tracing::error!("Failed to create Python script for Llama Prompt Guard 2: {}", e);
+                tracing::error!(
+                    "Failed to create Python script for Llama Prompt Guard 2: {}",
+                    e
+                );
                 "llama_prompt_guard2_scanner.py".to_string()
             }),
         }
@@ -428,10 +431,9 @@ if __name__ == "__main__":
 
         let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
         let script_path = temp_file.path().with_extension("py");
-        
-        fs::write(&script_path, script_content)
-            .context("Failed to write Python script")?;
-        
+
+        fs::write(&script_path, script_content).context("Failed to write Python script")?;
+
         // Make the script executable
         #[cfg(unix)]
         {
@@ -440,13 +442,15 @@ if __name__ == "__main__":
             perms.set_mode(0o755);
             fs::set_permissions(&script_path, perms)?;
         }
-        
+
         Ok(script_path.to_string_lossy().to_string())
     }
 
     async fn analyze_with_python(&self, text: &str) -> Result<ScanResult> {
-        tracing::info!("Analyzing text with Llama Prompt Guard 2: {}", 
-                      text.chars().take(100).collect::<String>() + "...");
+        tracing::info!(
+            "Analyzing text with Llama Prompt Guard 2: {}",
+            text.chars().take(100).collect::<String>() + "..."
+        );
 
         // Execute Python script with environment variables for authentication
         let mut cmd = Command::new("python3");
@@ -463,8 +467,7 @@ if __name__ == "__main__":
             cmd.env("HF_TOKEN", token);
         }
 
-        let output = cmd.output()
-            .context("Failed to execute Python script")?;
+        let output = cmd.output().context("Failed to execute Python script")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -480,8 +483,8 @@ if __name__ == "__main__":
         tracing::info!("Llama Prompt Guard 2 raw response: {}", stdout);
 
         // Parse JSON response
-        let analysis: Value = serde_json::from_str(&stdout)
-            .context("Failed to parse Python script output")?;
+        let analysis: Value =
+            serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
 
         self.parse_analysis_result(analysis)
     }
@@ -562,7 +565,10 @@ impl LlamaPromptGuardScanner {
         Self {
             model_name: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
             python_script_path: Self::create_python_script().unwrap_or_else(|e| {
-                tracing::error!("Failed to create Python script for Llama Prompt Guard: {}", e);
+                tracing::error!(
+                    "Failed to create Python script for Llama Prompt Guard: {}",
+                    e
+                );
                 "llama_prompt_guard_scanner.py".to_string()
             }),
         }
@@ -681,10 +687,9 @@ if __name__ == "__main__":
 
         let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
         let script_path = temp_file.path().with_extension("py");
-        
-        fs::write(&script_path, script_content)
-            .context("Failed to write Python script")?;
-        
+
+        fs::write(&script_path, script_content).context("Failed to write Python script")?;
+
         // Make the script executable
         #[cfg(unix)]
         {
@@ -693,13 +698,15 @@ if __name__ == "__main__":
             perms.set_mode(0o755);
             fs::set_permissions(&script_path, perms)?;
         }
-        
+
         Ok(script_path.to_string_lossy().to_string())
     }
 
     async fn analyze_with_python(&self, text: &str) -> Result<ScanResult> {
-        tracing::info!("Analyzing text with Prompt Injection Detection model: {}", 
-                      text.chars().take(100).collect::<String>() + "...");
+        tracing::info!(
+            "Analyzing text with Prompt Injection Detection model: {}",
+            text.chars().take(100).collect::<String>() + "..."
+        );
 
         // Execute Python script
         let output = Command::new("python3")
@@ -725,8 +732,8 @@ if __name__ == "__main__":
         tracing::info!("Prompt injection detection raw response: {}", stdout);
 
         // Parse JSON response
-        let analysis: Value = serde_json::from_str(&stdout)
-            .context("Failed to parse Python script output")?;
+        let analysis: Value =
+            serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
 
         self.parse_analysis_result(analysis)
     }

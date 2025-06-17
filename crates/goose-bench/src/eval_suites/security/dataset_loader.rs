@@ -1,9 +1,36 @@
-use crate::eval_suites::security::prompt_injection_detection::{PromptInjectionTestCase, PromptInjectionTestSuite};
+use crate::eval_suites::security::prompt_injection_detection::{
+    PromptInjectionTestCase, PromptInjectionTestSuite,
+};
 use anyhow::{Context, Result};
 use goose::security::content_scanner::ThreatLevel;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
+
+/// Find the project root by walking up the directory tree looking for Cargo.toml
+fn find_project_root() -> Result<PathBuf> {
+    // Start from the current executable location, or fall back to current dir
+    let start_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    // Walk up looking for Cargo.toml (project root indicator)
+    let mut current = start_dir;
+    loop {
+        if current.join("Cargo.toml").exists() {
+            return Ok(current);
+        }
+
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
+
+    // Fallback to current working directory
+    std::env::current_dir().context("Could not determine working directory")
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DatasetConfig {
@@ -694,6 +721,12 @@ impl PromptInjectionDatasetLoader {
     fn load_external_datasets() -> Result<Vec<PromptInjectionTestCase>> {
         let mut external_cases = Vec::new();
 
+        // Find the project root directory
+        let project_root = match find_project_root() {
+            Ok(root) => root,
+            Err(_) => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        };
+
         // Try to load from common dataset locations
         let dataset_paths = vec![
             "datasets/prompt_injection/test_cases.jsonl",
@@ -702,15 +735,20 @@ impl PromptInjectionDatasetLoader {
             "real_world_prompt_injection_attacks.json", // Real-world attacks we just created
         ];
 
-        for path in dataset_paths {
-            if Path::new(path).exists() {
-                match Self::load_from_file(path) {
+        for relative_path in dataset_paths {
+            let path = project_root.join(relative_path);
+            if path.exists() {
+                match Self::load_from_file(path.to_str().unwrap()) {
                     Ok(mut cases) => {
                         external_cases.append(&mut cases);
-                        println!("Loaded {} test cases from {}", cases.len(), path);
+                        println!("Loaded {} test cases from {}", cases.len(), path.display());
                     }
                     Err(e) => {
-                        println!("Warning: Failed to load dataset from {}: {}", path, e);
+                        println!(
+                            "Warning: Failed to load dataset from {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -722,50 +760,108 @@ impl PromptInjectionDatasetLoader {
     /// Load test cases from HuggingFace datasets
     fn load_huggingface_datasets() -> Result<Vec<PromptInjectionTestCase>> {
         let mut hf_cases = Vec::new();
-        
-        // Try to load from popular HuggingFace datasets
-        // Note: This is a placeholder for actual HuggingFace integration
-        // In practice, you'd use the `datasets` Python library or HF API
-        
-        // Example datasets to potentially integrate:
-        // - deepset/prompt-injections (70 likes, 1547 downloads)
-        // - JasperLS/prompt-injections (19 likes, 182 downloads) 
-        // - qualifire/Qualifire-prompt-injection-benchmark (4 likes, 5000 samples)
-        // - jayavibhav/prompt-injection (2 likes, 100K+ samples)
-        
-        // For now, we'll check if there are any local HF dataset files
-        let hf_dataset_paths = vec![
-            "datasets/deepset_prompt_injections.json",
-            "datasets/qualifire_benchmark.csv",
-            "datasets/prompt_injection_hf.jsonl",
+
+        // Find the project root directory
+        let project_root = match find_project_root() {
+            Ok(root) => {
+                println!("Found project root at: {}", root.display());
+                root
+            }
+            Err(e) => {
+                println!(
+                    "Warning: Could not find project root ({}), using current directory",
+                    e
+                );
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            }
+        };
+
+        // Load our comprehensive datasets using absolute paths
+        let dataset_files = vec![
+            "datasets/all_prompt_injection.json",
+            "datasets/comprehensive_prompt_injection.json",
+            "datasets/evaded_prompt_injection.json",
+            "datasets/huggingface_prompt_injection.json", // From API download if available
         ];
-        
-        for path in hf_dataset_paths {
-            if Path::new(path).exists() {
-                match Self::load_from_file(path) {
+
+        for relative_path in dataset_files {
+            let path = project_root.join(relative_path);
+            if path.exists() {
+                match Self::load_from_file(path.to_str().unwrap()) {
                     Ok(mut cases) => {
                         let cases_count = cases.len();
-                        // Mark these as coming from HuggingFace
+                        // Mark these as coming from HuggingFace/research datasets
                         for case in &mut cases {
-                            case.source = "huggingface".to_string();
+                            if case.source.starts_with("research_")
+                                || case.source.starts_with("evaded_")
+                            {
+                                // Keep original source
+                            } else if !case.source.starts_with("huggingface_") {
+                                case.source = format!("external_{}", case.source);
+                            }
                         }
                         hf_cases.extend(cases);
-                        println!("Loaded {} test cases from HuggingFace dataset: {}", cases_count, path);
+                        println!(
+                            "Loaded {} test cases from external dataset: {}",
+                            cases_count,
+                            path.display()
+                        );
                     }
                     Err(e) => {
-                        println!("Warning: Failed to load HuggingFace dataset from {}: {}", path, e);
+                        println!(
+                            "Warning: Failed to load external dataset from {}: {}",
+                            path.display(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                println!("Dataset file not found: {}", path.display());
+            }
+        }
+
+        // Also try JSONL format
+        let jsonl_files = vec![
+            "datasets/all_prompt_injection.jsonl",
+            "datasets/huggingface_prompt_injection.jsonl",
+        ];
+
+        for relative_path in jsonl_files {
+            let path = project_root.join(relative_path);
+            if path.exists() {
+                match Self::load_from_file(path.to_str().unwrap()) {
+                    Ok(mut cases) => {
+                        let cases_count = cases.len();
+                        // Avoid duplicates by checking if we already loaded from JSON version
+                        let json_path = path.with_extension("json");
+                        if !json_path.exists() {
+                            for case in &mut cases {
+                                if !case.source.starts_with("huggingface_")
+                                    && !case.source.starts_with("research_")
+                                {
+                                    case.source = format!("external_{}", case.source);
+                                }
+                            }
+                            hf_cases.extend(cases);
+                            println!(
+                                "Loaded {} test cases from JSONL dataset: {}",
+                                cases_count,
+                                path.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!(
+                            "Warning: Failed to load JSONL dataset from {}: {}",
+                            path.display(),
+                            e
+                        );
                     }
                 }
             }
         }
-        
-        // TODO: Implement actual HuggingFace API integration
-        // This would involve:
-        // 1. Using reqwest to call HF API
-        // 2. Parsing the dataset format
-        // 3. Converting to our PromptInjectionTestCase format
-        // 4. Handling pagination for large datasets
-        
+
+        println!("Total external test cases loaded: {}", hf_cases.len());
         Ok(hf_cases)
     }
 
@@ -787,15 +883,15 @@ impl PromptInjectionDatasetLoader {
 
     fn parse_jsonlines(content: &str) -> Result<Vec<PromptInjectionTestCase>> {
         let mut test_cases = Vec::new();
-        
+
         for (line_num, line) in content.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             let test_case: PromptInjectionTestCase = serde_json::from_str(line)
                 .with_context(|| format!("Failed to parse line {}", line_num + 1))?;
-            
+
             test_cases.push(test_case);
         }
 
@@ -803,9 +899,9 @@ impl PromptInjectionDatasetLoader {
     }
 
     fn parse_json(content: &str) -> Result<Vec<PromptInjectionTestCase>> {
-        let test_suite: PromptInjectionTestSuite = serde_json::from_str(content)
-            .context("Failed to parse JSON dataset")?;
-        
+        let test_suite: PromptInjectionTestSuite =
+            serde_json::from_str(content).context("Failed to parse JSON dataset")?;
+
         Ok(test_suite.test_cases)
     }
 
@@ -813,7 +909,7 @@ impl PromptInjectionDatasetLoader {
         // Simple CSV parsing - in production, you'd want to use a proper CSV library
         let mut test_cases = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
-        
+
         if lines.is_empty() {
             return Ok(test_cases);
         }
@@ -821,7 +917,7 @@ impl PromptInjectionDatasetLoader {
         // Skip header line
         for (line_num, line) in lines.iter().skip(1).enumerate() {
             let fields: Vec<&str> = line.split(',').collect();
-            
+
             if fields.len() >= 6 {
                 let threat_level = match fields[2].trim().to_lowercase().as_str() {
                     "safe" => ThreatLevel::Safe,
@@ -841,10 +937,94 @@ impl PromptInjectionDatasetLoader {
                     source: fields[5].trim().to_string(),
                 });
             } else {
-                println!("Warning: Skipping malformed CSV line {}: {}", line_num + 2, line);
+                println!(
+                    "Warning: Skipping malformed CSV line {}: {}",
+                    line_num + 2,
+                    line
+                );
             }
         }
 
         Ok(test_cases)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_project_root() {
+        let root = find_project_root().expect("Should find project root");
+        println!("Found project root: {}", root.display());
+
+        // Should find a Cargo.toml in the root
+        assert!(
+            root.join("Cargo.toml").exists(),
+            "Cargo.toml should exist in project root"
+        );
+
+        // Should find the datasets directory
+        let datasets_dir = root.join("datasets");
+        if datasets_dir.exists() {
+            println!("Datasets directory found: {}", datasets_dir.display());
+
+            // Check if our test datasets exist
+            let test_files = vec![
+                "all_prompt_injection.json",
+                "comprehensive_prompt_injection.json",
+                "evaded_prompt_injection.json",
+                "huggingface_prompt_injection.json",
+            ];
+
+            for file in test_files {
+                let path = datasets_dir.join(file);
+                if path.exists() {
+                    println!("Found dataset: {}", path.display());
+                } else {
+                    println!("Dataset not found: {}", path.display());
+                }
+            }
+        } else {
+            println!(
+                "Datasets directory not found at: {}",
+                datasets_dir.display()
+            );
+        }
+    }
+
+    #[test]
+    fn test_load_comprehensive_dataset() {
+        let result = PromptInjectionDatasetLoader::load_comprehensive_dataset();
+        match result {
+            Ok(suite) => {
+                println!("Successfully loaded {} test cases", suite.test_cases.len());
+
+                // Should have more than just the built-in cases (73)
+                if suite.test_cases.len() > 73 {
+                    println!("✅ External datasets were loaded successfully!");
+                } else {
+                    println!(
+                        "⚠️  Only {} test cases loaded (expected more than 73)",
+                        suite.test_cases.len()
+                    );
+                }
+
+                // Print some stats about sources
+                let mut source_counts = std::collections::HashMap::new();
+                for case in &suite.test_cases {
+                    *source_counts.entry(&case.source).or_insert(0) += 1;
+                }
+
+                println!("Test cases by source:");
+                for (source, count) in source_counts {
+                    println!("  {}: {}", source, count);
+                }
+            }
+            Err(e) => {
+                println!("Failed to load dataset: {}", e);
+                panic!("Dataset loading failed");
+            }
+        }
     }
 }
