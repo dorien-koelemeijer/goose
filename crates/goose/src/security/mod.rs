@@ -12,7 +12,10 @@ use content_scanner::{ContentScanner, ScanResult, ThreatLevel};
 use mcp_core::Content;
 use serde_json::Value;
 use std::sync::Arc;
-use threat_detection::{LlamaPromptGuard2Scanner, LlamaPromptGuardScanner, MistralNemoScanner};
+use threat_detection::{
+    DeepsetDebertaScanner, LlamaPromptGuard2Scanner, LlamaPromptGuardScanner, MistralNemoScanner,
+    OpenAiModerationScanner, ParallelEnsembleScanner, ToxicBertScanner,
+};
 
 pub struct SecurityManager {
     config: SecurityConfig,
@@ -30,6 +33,7 @@ impl SecurityManager {
                         endpoint = %config.ollama_endpoint,
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
                         "Initializing Mistral Nemo security scanner"
                     );
                     Some(
@@ -43,9 +47,10 @@ impl SecurityManager {
                         scanner = ?config.scanner_type,
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
                         "Initializing ProtectAI DeBERTa security scanner"
                     );
-                    Some(Arc::new(LlamaPromptGuardScanner::new()) as Arc<dyn ContentScanner>)
+                    Some(Arc::new(LlamaPromptGuardScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
                 }
                 ScannerType::LlamaPromptGuard2 => {
                     tracing::info!(
@@ -53,9 +58,67 @@ impl SecurityManager {
                         scanner = ?config.scanner_type,
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
                         "Initializing Llama Prompt Guard 2 security scanner"
                     );
-                    Some(Arc::new(LlamaPromptGuard2Scanner::new()) as Arc<dyn ContentScanner>)
+                    Some(Arc::new(LlamaPromptGuard2Scanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
+                ScannerType::DeepsetDeberta => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing Deepset DeBERTa security scanner"
+                    );
+                    Some(Arc::new(DeepsetDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
+                ScannerType::OpenAiModeration => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing OpenAI Moderation security scanner"
+                    );
+                    Some(Arc::new(OpenAiModerationScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
+                ScannerType::ToxicBert => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing ToxicBERT security scanner"
+                    );
+                    Some(Arc::new(ToxicBertScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
+                ScannerType::ParallelEnsemble => {
+                    if let Some(ensemble_config) = config.ensemble_config.clone() {
+                        tracing::info!(
+                            enabled = true,
+                            scanner = ?config.scanner_type,
+                            action_policy = ?config.action_policy,
+                            threshold = ?config.scan_threshold,
+                            confidence_threshold = config.confidence_threshold,
+                            voting_strategy = ?ensemble_config.voting_strategy,
+                            member_count = ensemble_config.member_configs.len(),
+                            "Initializing Parallel Ensemble security scanner"
+                        );
+                        match ParallelEnsembleScanner::new(ensemble_config) {
+                            Ok(ensemble_scanner) => Some(Arc::new(ensemble_scanner) as Arc<dyn ContentScanner>),
+                            Err(e) => {
+                                tracing::error!("Failed to create ensemble scanner: {}", e);
+                                None
+                            }
+                        }
+                    } else {
+                        tracing::error!("ParallelEnsemble scanner type requires ensemble_config");
+                        None
+                    }
                 }
                 ScannerType::None => {
                     tracing::info!("Security scanner type is None, scanner will be disabled");
