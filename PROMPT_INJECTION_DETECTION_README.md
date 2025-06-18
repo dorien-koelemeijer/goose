@@ -4,13 +4,11 @@ This system implements multi-model prompt injection detection for Goose, with co
 
 ## 🎯 Overview
 
-The system tests **3 different models** across **9 configurations** to find the best approach for detecting prompt injection attacks:
+The system tests **3 different models** across **multiple configurations** to find the best approach for detecting prompt injection attacks:
 
 1. **Mistral Nemo** (via Ollama) - General purpose LLM with custom security prompting
 2. **ProtectAI DeBERTa** (via Python) - Specialized prompt injection detection model (`protectai/deberta-v3-base-prompt-injection-v2`)
 3. **Llama Prompt Guard 2** (via Python) - Meta's latest security-focused model (`meta-llama/Llama-Prompt-Guard-2-86M`)
-
-**Note**: The `LlamaPromptGuard` scanner type actually uses ProtectAI's DeBERTa model, not a Llama model. The naming is historical.
 
 ## 🚀 Quick Start
 
@@ -20,7 +18,7 @@ The system tests **3 different models** across **9 configurations** to find the 
 # Install Python dependencies for specialized models
 pip install torch transformers
 
-# For Mistral Nemo: Install and start Ollama
+# For Mistral Nemo (optional): Install and start Ollama
 # Download from: https://ollama.ai/
 ollama pull mistral-nemo
 ollama serve  # Start the server
@@ -33,7 +31,14 @@ ollama serve  # Start the server
 cargo run --bin goose -- bench run --config prompt-injection-benchmark-config.json
 ```
 
-**Important Note**: The `prompt-injection-benchmark-config.json` file specifies `"provider": "ollama"` and `"name": "mistral-nemo"`, but this is just used by the benchmark framework for organizing output directories. The actual evaluation tests **all 3 models** (Mistral Nemo, ProtectAI DeBERTa, and Llama Prompt Guard 2) regardless of what's in the config file.
+**Results will be saved to:**
+```
+/tmp/goose-security-benchmark/benchmark-YYYY-MM-DD-HH:MM:SS/security-multi-model-evaluation/
+```
+
+The benchmark tests **4 model configurations** by default:
+- ProtectAI DeBERTa (block-medium, block-low, sanitize-medium)  
+- Llama Prompt Guard 2 (block-medium)
 
 ## 📊 What Gets Tested
 
@@ -62,7 +67,7 @@ ollama serve
 **Cons**: Slower, requires running Ollama server
 
 ### 2. ProtectAI DeBERTa (Specialized)
-**Scanner Type**: `LlamaPromptGuard` (confusing naming - this is NOT a Llama model)
+**Scanner Type**: `ProtectAiDeberta`
 
 ```bash
 # Install dependencies
@@ -165,7 +170,7 @@ Edit the security config to control individual model behavior:
 ```rust
 let security_config = SecurityConfig {
     enabled: true,
-    scanner_type: ScannerType::LlamaPromptGuard2, // or MistralNemo, LlamaPromptGuard
+    scanner_type: ScannerType::ProtectAiDeberta,  // or MistralNemo, LlamaPromptGuard2
     action_policy: ActionPolicy::Block,           // or Sanitize, Warn, LogOnly  
     scan_threshold: ThreatThreshold::Medium,      // or Low, High, Critical
     ollama_endpoint: "http://localhost:11434".to_string(), // Only for Mistral

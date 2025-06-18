@@ -1,5 +1,6 @@
 pub mod config;
 pub mod content_scanner;
+pub mod model_pool;
 pub mod threat_detection;
 
 #[cfg(test)]
@@ -36,13 +37,13 @@ impl SecurityManager {
                             as Arc<dyn ContentScanner>,
                     )
                 }
-                ScannerType::LlamaPromptGuard => {
+                ScannerType::ProtectAiDeberta => {
                     tracing::info!(
                         enabled = true,
                         scanner = ?config.scanner_type,
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
-                        "Initializing Llama Prompt Guard security scanner"
+                        "Initializing ProtectAI DeBERTa security scanner"
                     );
                     Some(Arc::new(LlamaPromptGuardScanner::new()) as Arc<dyn ContentScanner>)
                 }

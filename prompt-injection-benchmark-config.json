@@ -2,7 +2,7 @@
   "models": [
     {
       "provider": "ollama",
-      "name": "mistral-nemo",
+      "name": "security-evaluation",
       "parallel_safe": false,
       "tool_shim": null
     }

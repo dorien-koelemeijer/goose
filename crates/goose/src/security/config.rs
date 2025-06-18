@@ -13,7 +13,7 @@ pub struct SecurityConfig {
 pub enum ScannerType {
     None,
     MistralNemo,
-    LlamaPromptGuard,
+    ProtectAiDeberta,    // Renamed from LlamaPromptGuard for clarity
     LlamaPromptGuard2,
 }
 

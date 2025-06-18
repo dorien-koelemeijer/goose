@@ -1,14 +1,15 @@
 use crate::bench_session::BenchAgent;
 use crate::bench_work_dir::BenchmarkWorkDir;
+use crate::eval_suites::security::{
+    dataset_loader::PromptInjectionDatasetLoader,
+    metrics::{EvaluationMetrics, is_threat},
+    scanner_configs::ScannerConfig,
+};
 use crate::eval_suites::{EvalMetricValue, Evaluation, ExtensionRequirements};
 use crate::register_evaluation;
 use anyhow::Result;
 use async_trait::async_trait;
-use goose::security::content_scanner::ThreatLevel;
-use goose::security::{
-    config::{ActionPolicy, ScannerType, SecurityConfig, ThreatThreshold},
-    SecurityManager,
-};
+use goose::security::SecurityManager;
 use mcp_core::Content;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -18,7 +19,7 @@ use std::time::Instant;
 pub struct PromptInjectionTestCase {
     pub id: String,
     pub input: String,
-    pub expected_threat_level: ThreatLevel,
+    pub expected_threat_level: goose::security::content_scanner::ThreatLevel,
     pub category: String,
     pub description: String,
     pub source: String,
@@ -34,126 +35,10 @@ pub struct PromptInjectionDetectionEval {
     scanner_configs: Vec<ScannerConfig>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ScannerConfig {
-    pub name: String,
-    pub config: SecurityConfig,
-}
-
 impl PromptInjectionDetectionEval {
     pub fn new() -> Self {
-        // Load comprehensive test suite from multiple sources
-        let test_suite =
-            match super::dataset_loader::PromptInjectionDatasetLoader::load_comprehensive_dataset()
-            {
-                Ok(suite) => suite,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to load comprehensive dataset: {}. Using empty dataset.",
-                        e
-                    );
-                    PromptInjectionTestSuite { test_cases: vec![] }
-                }
-            };
-
-        // Define different scanner configurations to test
-        let scanner_configs = vec![
-            // // Mistral Nemo configurations
-            // ScannerConfig {
-            //     name: "mistral-nemo-block-medium".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::MistralNemo,
-            //         ollama_endpoint: "http://localhost:11434".to_string(),
-            //         action_policy: ActionPolicy::Block,
-            //         scan_threshold: ThreatThreshold::Medium,
-            //     },
-            // },
-            // ScannerConfig {
-            //     name: "mistral-nemo-block-low".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::MistralNemo,
-            //         ollama_endpoint: "http://localhost:11434".to_string(),
-            //         action_policy: ActionPolicy::Block,
-            //         scan_threshold: ThreatThreshold::Low,
-            //     },
-            // },
-            // ScannerConfig {
-            //     name: "mistral-nemo-sanitize-medium".to_string(),
-            //     config: SecurityConfig {
-            //         enabled: true,
-            //         scanner_type: ScannerType::MistralNemo,
-            //         ollama_endpoint: "http://localhost:11434".to_string(),
-            //         action_policy: ActionPolicy::Sanitize,
-            //         scan_threshold: ThreatThreshold::Medium,
-            //     },
-            // },
-
-            // ProtectAI DeBERTa Model configurations (working model)
-            ScannerConfig {
-                name: "protectai-deberta-block-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
-            ScannerConfig {
-                name: "protectai-deberta-block-low".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Low,
-                },
-            },
-            ScannerConfig {
-                name: "protectai-deberta-sanitize-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Sanitize,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
-
-            // Llama Prompt Guard 2 configurations - requires HF token
-            ScannerConfig {
-                name: "llama-prompt-guard2-block-medium".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::LlamaPromptGuard2,
-                    ollama_endpoint: "".to_string(), // Not used for this model
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                },
-            },
-//             ScannerConfig {
-//                 name: "llama-prompt-guard2-block-low".to_string(),
-//                 config: SecurityConfig {
-//                     enabled: true,
-//                     scanner_type: ScannerType::LlamaPromptGuard2,
-//                     ollama_endpoint: "".to_string(), // Not used for this model
-//                     action_policy: ActionPolicy::Block,
-//                     scan_threshold: ThreatThreshold::Low,
-//                 },
-//             },
-//             ScannerConfig {
-//                 name: "llama-prompt-guard2-sanitize-medium".to_string(),
-//                 config: SecurityConfig {
-//                     enabled: true,
-//                     scanner_type: ScannerType::LlamaPromptGuard2,
-//                     ollama_endpoint: "".to_string(), // Not used for this model
-//                     action_policy: ActionPolicy::Sanitize,
-//                     scan_threshold: ThreatThreshold::Medium,
-//                 },
-//             },
-        ];
+        let test_suite = Self::load_test_suite();
+        let scanner_configs = ScannerConfig::get_all_configs();
 
         Self {
             test_suite,
@@ -161,150 +46,92 @@ impl PromptInjectionDetectionEval {
         }
     }
 
-    async fn test_scanner_config(
-        &self,
-        config: &ScannerConfig,
-    ) -> Result<Vec<(String, EvalMetricValue)>> {
+    fn load_test_suite() -> PromptInjectionTestSuite {
+        match PromptInjectionDatasetLoader::load_comprehensive_dataset() {
+            Ok(suite) => {
+                println!("✅ Loaded {} test cases", suite.test_cases.len());
+                suite
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to load test dataset: {}", e);
+                eprintln!("   Using empty dataset for evaluation");
+                PromptInjectionTestSuite { test_cases: vec![] }
+            }
+        }
+    }
+
+    async fn evaluate_scanner(&self, config: &ScannerConfig) -> Result<EvaluationMetrics> {
+        println!("🔍 Testing: {}", config.name);
+        
         let security_manager = SecurityManager::new(config.config.clone());
+        let mut metrics = EvaluationMetrics::new();
 
         if !security_manager.is_enabled() {
-            return Ok(vec![
-                (
-                    format!("{}_enabled", config.name),
-                    EvalMetricValue::Boolean(false),
-                ),
-                (
-                    format!("{}_error", config.name),
-                    EvalMetricValue::String("Scanner not enabled".to_string()),
-                ),
-            ]);
+            println!("❌ Scanner not enabled: {}", config.name);
+            return Ok(metrics);
         }
 
-        let mut metrics = Vec::new();
-        let mut true_positives = 0;
-        let mut false_positives = 0;
-        let mut true_negatives = 0;
-        let mut false_negatives = 0;
-        let mut total_scan_time = 0.0;
-        let mut scan_errors = 0;
+        for (i, test_case) in self.test_suite.test_cases.iter().enumerate() {
+            if i % 25 == 0 {
+                println!("   Progress: {}/{}", i, self.test_suite.test_cases.len());
+            }
 
-        for test_case in &self.test_suite.test_cases {
             let start_time = Instant::now();
-
             let content = vec![Content::text(&test_case.input)];
 
             match security_manager.scan_content(&content).await {
                 Ok(Some(scan_result)) => {
                     let scan_time = start_time.elapsed().as_secs_f64();
-                    total_scan_time += scan_time;
-
-                    // Classify the result
-                    let detected_as_threat = scan_result.threat_level != ThreatLevel::Safe;
-                    let expected_as_threat = test_case.expected_threat_level != ThreatLevel::Safe;
-
-                    match (detected_as_threat, expected_as_threat) {
-                        (true, true) => true_positives += 1,
-                        (false, false) => true_negatives += 1,
-                        (true, false) => false_positives += 1,
-                        (false, true) => false_negatives += 1,
-                    }
-
-                    // Log individual test case results
-                    metrics.push((
-                        format!("{}_{}_detected_level", config.name, test_case.id),
-                        EvalMetricValue::String(format!("{:?}", scan_result.threat_level)),
-                    ));
-
-                    metrics.push((
-                        format!("{}_{}_scan_time", config.name, test_case.id),
-                        EvalMetricValue::Float(scan_time),
-                    ));
+                    let detected_threat = is_threat(&scan_result.threat_level);
+                    let expected_threat = is_threat(&test_case.expected_threat_level);
+                    
+                    metrics.record_result(detected_threat, expected_threat, scan_time);
                 }
                 Ok(None) => {
-                    // Scanner disabled
-                    metrics.push((
-                        format!("{}_{}_result", config.name, test_case.id),
-                        EvalMetricValue::String("scanner_disabled".to_string()),
-                    ));
+                    // Scanner disabled - treat as no threat detected
+                    let scan_time = start_time.elapsed().as_secs_f64();
+                    let expected_threat = is_threat(&test_case.expected_threat_level);
+                    metrics.record_result(false, expected_threat, scan_time);
                 }
                 Err(e) => {
-                    scan_errors += 1;
-                    metrics.push((
-                        format!("{}_{}_error", config.name, test_case.id),
-                        EvalMetricValue::String(e.to_string()),
-                    ));
+                    eprintln!("   Error on test {}: {}", test_case.id, e);
+                    metrics.record_error();
                 }
             }
         }
 
-        // Calculate aggregate metrics
-        let total_cases = self.test_suite.test_cases.len() as f64;
-        let accuracy = (true_positives + true_negatives) as f64 / total_cases;
-        let precision = if (true_positives + false_positives) > 0 {
-            true_positives as f64 / (true_positives + false_positives) as f64
-        } else {
-            0.0
-        };
-        let recall = if (true_positives + false_negatives) > 0 {
-            true_positives as f64 / (true_positives + false_negatives) as f64
-        } else {
-            0.0
-        };
-        let f1_score = if (precision + recall) > 0.0 {
-            2.0 * (precision * recall) / (precision + recall)
-        } else {
-            0.0
-        };
-
-        // Add aggregate metrics
-        metrics.extend(vec![
-            (
-                format!("{}_accuracy", config.name),
-                EvalMetricValue::Float(accuracy),
-            ),
-            (
-                format!("{}_precision", config.name),
-                EvalMetricValue::Float(precision),
-            ),
-            (
-                format!("{}_recall", config.name),
-                EvalMetricValue::Float(recall),
-            ),
-            (
-                format!("{}_f1_score", config.name),
-                EvalMetricValue::Float(f1_score),
-            ),
-            (
-                format!("{}_true_positives", config.name),
-                EvalMetricValue::Integer(true_positives),
-            ),
-            (
-                format!("{}_false_positives", config.name),
-                EvalMetricValue::Integer(false_positives),
-            ),
-            (
-                format!("{}_true_negatives", config.name),
-                EvalMetricValue::Integer(true_negatives),
-            ),
-            (
-                format!("{}_false_negatives", config.name),
-                EvalMetricValue::Integer(false_negatives),
-            ),
-            (
-                format!("{}_avg_scan_time", config.name),
-                EvalMetricValue::Float(total_scan_time / total_cases),
-            ),
-            (
-                format!("{}_scan_errors", config.name),
-                EvalMetricValue::Integer(scan_errors),
-            ),
-            (
-                format!("{}_total_test_cases", config.name),
-                EvalMetricValue::Integer(total_cases as i64),
-            ),
-        ]);
-
+        self.print_summary(&config.name, &metrics);
         Ok(metrics)
+    }
+
+    fn print_summary(&self, config_name: &str, metrics: &EvaluationMetrics) {
+        println!("📊 Results for {}:", config_name);
+        println!("   Accuracy:  {:.1}%", metrics.accuracy() * 100.0);
+        println!("   Precision: {:.1}%", metrics.precision() * 100.0);
+        println!("   Recall:    {:.1}%", metrics.recall() * 100.0);
+        println!("   F1 Score:  {:.3}", metrics.f1_score());
+        println!("   Avg Time:  {:.3}s", metrics.avg_scan_time());
+        println!("   Errors:    {}", metrics.scan_errors);
+        println!();
+    }
+
+    fn save_detailed_results(
+        &self,
+        run_loc: &BenchmarkWorkDir,
+        all_metrics: &[(String, EvalMetricValue)],
+    ) -> Result<()> {
+        let results_path = run_loc.base_path.join("prompt_injection_results.json");
+        
+        let detailed_results = serde_json::json!({
+            "test_suite": self.test_suite,
+            "scanner_configs": self.scanner_configs.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            "metrics": all_metrics
+        });
+
+        fs::write(&results_path, serde_json::to_string_pretty(&detailed_results)?)?;
+        println!("💾 Detailed results saved to: {:?}", results_path);
+        
+        Ok(())
     }
 }
 
@@ -315,20 +142,21 @@ impl Evaluation for PromptInjectionDetectionEval {
         _agent: &mut BenchAgent,
         run_loc: &mut BenchmarkWorkDir,
     ) -> Result<Vec<(String, EvalMetricValue)>> {
-        println!("Running Prompt Injection Detection Evaluation");
+        println!("🚀 Starting Prompt Injection Detection Evaluation");
+        println!("📋 Testing {} configurations on {} test cases", 
+                 self.scanner_configs.len(), 
+                 self.test_suite.test_cases.len());
+        println!();
 
         let mut all_metrics = Vec::new();
 
-        // Test each scanner configuration
         for config in &self.scanner_configs {
-            println!("Testing scanner configuration: {}", config.name);
-
-            match self.test_scanner_config(config).await {
-                Ok(mut metrics) => {
-                    all_metrics.append(&mut metrics);
+            match self.evaluate_scanner(config).await {
+                Ok(metrics) => {
+                    all_metrics.extend(metrics.to_eval_metrics(&config.name));
                 }
                 Err(e) => {
-                    println!("Error testing config {}: {}", config.name, e);
+                    eprintln!("❌ Error evaluating {}: {}", config.name, e);
                     all_metrics.push((
                         format!("{}_config_error", config.name),
                         EvalMetricValue::String(e.to_string()),
@@ -337,21 +165,8 @@ impl Evaluation for PromptInjectionDetectionEval {
             }
         }
 
-        // Save detailed results to file
-        let results_path = run_loc.base_path.join("prompt_injection_results.json");
-        let detailed_results = serde_json::json!({
-            "test_suite": self.test_suite,
-            "scanner_configs": self.scanner_configs.iter().map(|c| &c.name).collect::<Vec<_>>(),
-            "metrics": all_metrics.iter().map(|(k, v)| (k, v)).collect::<Vec<_>>()
-        });
-
-        fs::write(
-            &results_path,
-            serde_json::to_string_pretty(&detailed_results)?,
-        )?;
-
-        println!("Detailed results saved to: {:?}", results_path);
-        println!("Prompt Injection Detection Evaluation completed");
+        self.save_detailed_results(run_loc, &all_metrics)?;
+        println!("✅ Prompt Injection Detection Evaluation completed");
 
         Ok(all_metrics)
     }
@@ -361,7 +176,7 @@ impl Evaluation for PromptInjectionDetectionEval {
     }
 
     fn required_extensions(&self) -> ExtensionRequirements {
-        ExtensionRequirements::default() // No specific extensions required
+        ExtensionRequirements::default()
     }
 }
 
