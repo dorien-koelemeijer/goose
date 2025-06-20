@@ -98,6 +98,17 @@ impl SecurityManager {
                     );
                     Some(Arc::new(rust_scanners::OnnxProtectAiDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
                 }
+                ScannerType::RustLlamaPromptGuard2 => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing ONNX Llama Prompt Guard 2 security scanner"
+                    );
+                    Some(Arc::new(rust_scanners::OnnxLlamaPromptGuard2Scanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
                 ScannerType::OpenAiModeration => {
                     tracing::info!(
                         enabled = true,

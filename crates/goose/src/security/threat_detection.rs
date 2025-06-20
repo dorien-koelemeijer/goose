@@ -1376,6 +1376,9 @@ impl ParallelEnsembleScanner {
                 ScannerType::RustProtectAiDeberta => {
                     Box::new(crate::security::rust_scanners::OnnxProtectAiDebertaScanner::new(member_config.confidence_threshold))
                 },
+                ScannerType::RustLlamaPromptGuard2 => {
+                    Box::new(crate::security::rust_scanners::OnnxLlamaPromptGuard2Scanner::new(member_config.confidence_threshold))
+                },
                 ScannerType::ProtectAiDeberta => {
                     Box::new(LlamaPromptGuardScanner::new(member_config.confidence_threshold))
                 },

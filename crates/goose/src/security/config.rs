@@ -53,6 +53,7 @@ pub enum ScannerType {
     DeepsetDeberta,      // deepset/deberta-v3-base-injection-v2 - often better precision (Python-based)
     RustDeepsetDeberta,  // Fast Rust implementation of deepset/deberta-v3-base-injection using ONNX
     RustProtectAiDeberta, // Fast Rust implementation of protectai/deberta-v3-base-prompt-injection-v2 using ONNX
+    RustLlamaPromptGuard2, // Fast Rust implementation of meta-llama/Llama-Prompt-Guard-2-86M using ONNX
     OpenAiModeration,    // OpenAI Moderation API - very low false positives
     ToxicBert,           // unitary/toxic-bert - good at context understanding
     ParallelEnsemble,    // Combines multiple models in parallel for better accuracy
