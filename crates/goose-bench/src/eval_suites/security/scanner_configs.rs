@@ -34,6 +34,20 @@ impl ScannerConfig {
     /// Test configuration with a few key models at different confidence levels
     pub fn get_test_configs() -> Vec<ScannerConfig> {
         vec![
+            // NEW: Fast ONNX-based scanner for comparison
+            ScannerConfig {
+                name: "onnx-deepset-deberta-0.7".to_string(),
+                config: SecurityConfig {
+                    enabled: true,
+                    scanner_type: ScannerType::RustDeepsetDeberta,
+                    ollama_endpoint: "".to_string(),
+                    action_policy: ActionPolicy::Block,
+                    scan_threshold: ThreatThreshold::Medium,
+                    confidence_threshold: 0.7,
+                    ensemble_config: None,
+                    hybrid_config: None,
+                },
+            },
             // Single model tests for comparison
 //             ScannerConfig {
 //                 name: "deepset-deberta-0.7".to_string(),
@@ -49,77 +63,77 @@ impl ScannerConfig {
 //                 },
 //             },
             // Optimized Parallel Ensemble with "Any Detection" strategy + timeouts
-            ScannerConfig {
-                name: "ensemble-any-detection-optimized".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::ParallelEnsemble,
-                    ollama_endpoint: "".to_string(),
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                    confidence_threshold: 0.7,
-                    ensemble_config: Some(EnsembleConfig {
-                        voting_strategy: VotingStrategy::AnyDetection,
-                        max_scan_time_ms: Some(800),     // 800ms timeout
-                        min_models_required: Some(2),    // Need at least 2 models
-                        early_exit_threshold: Some(0.9), // If 2+ models agree with >90% confidence, exit early
-                        member_configs: vec![
-                            EnsembleMember {
-                                scanner_type: ScannerType::ProtectAiDeberta,  // Fastest first
-                                confidence_threshold: 0.7,
-                                weight: 1.0,
-                            },
-                            EnsembleMember {
-                                scanner_type: ScannerType::DeepsetDeberta,    // Second fastest
-                                confidence_threshold: 0.7,
-                                weight: 1.0,
-                            },
-                            EnsembleMember {
-                                scanner_type: ScannerType::LlamaPromptGuard2, // Slowest, but good accuracy
-                                confidence_threshold: 0.6,
-                                weight: 1.0,
-                            },
-                        ],
-                    }),
-                    hybrid_config: None,
-                },
-            },
+//             ScannerConfig {
+//                 name: "ensemble-any-detection-optimized".to_string(),
+//                 config: SecurityConfig {
+//                     enabled: true,
+//                     scanner_type: ScannerType::ParallelEnsemble,
+//                     ollama_endpoint: "".to_string(),
+//                     action_policy: ActionPolicy::Block,
+//                     scan_threshold: ThreatThreshold::Medium,
+//                     confidence_threshold: 0.7,
+//                     ensemble_config: Some(EnsembleConfig {
+//                         voting_strategy: VotingStrategy::AnyDetection,
+//                         max_scan_time_ms: Some(800),     // 800ms timeout
+//                         min_models_required: Some(2),    // Need at least 2 models
+//                         early_exit_threshold: Some(0.9), // If 2+ models agree with >90% confidence, exit early
+//                         member_configs: vec![
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::ProtectAiDeberta,  // Fastest first
+//                                 confidence_threshold: 0.7,
+//                                 weight: 1.0,
+//                             },
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::DeepsetDeberta,    // Second fastest
+//                                 confidence_threshold: 0.7,
+//                                 weight: 1.0,
+//                             },
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::LlamaPromptGuard2, // Slowest, but good accuracy
+//                                 confidence_threshold: 0.6,
+//                                 weight: 1.0,
+//                             },
+//                         ],
+//                     }),
+//                     hybrid_config: None,
+//                 },
+//             },
             // Parallel Ensemble with "Majority Vote" strategy (more conservative) + optimizations
-            ScannerConfig {
-                name: "ensemble-majority-vote-optimized".to_string(),
-                config: SecurityConfig {
-                    enabled: true,
-                    scanner_type: ScannerType::ParallelEnsemble,
-                    ollama_endpoint: "".to_string(),
-                    action_policy: ActionPolicy::Block,
-                    scan_threshold: ThreatThreshold::Medium,
-                    confidence_threshold: 0.7,
-                    ensemble_config: Some(EnsembleConfig {
-                        voting_strategy: VotingStrategy::MajorityVote,
-                        max_scan_time_ms: Some(800),     // 800ms timeout
-                        min_models_required: Some(2),    // Need at least 2 models
-                        early_exit_threshold: Some(0.85), // Slightly lower threshold for majority vote
-                        member_configs: vec![
-                            EnsembleMember {
-                                scanner_type: ScannerType::ProtectAiDeberta,
-                                confidence_threshold: 0.7,
-                                weight: 1.0,
-                            },
-                            EnsembleMember {
-                                scanner_type: ScannerType::DeepsetDeberta,
-                                confidence_threshold: 0.7,
-                                weight: 1.0,
-                            },
-                            EnsembleMember {
-                                scanner_type: ScannerType::LlamaPromptGuard2,
-                                confidence_threshold: 0.7,
-                                weight: 1.0,
-                            },
-                        ],
-                    }),
-                    hybrid_config: None,
-                },
-            },
+//             ScannerConfig {
+//                 name: "ensemble-majority-vote-optimized".to_string(),
+//                 config: SecurityConfig {
+//                     enabled: true,
+//                     scanner_type: ScannerType::ParallelEnsemble,
+//                     ollama_endpoint: "".to_string(),
+//                     action_policy: ActionPolicy::Block,
+//                     scan_threshold: ThreatThreshold::Medium,
+//                     confidence_threshold: 0.7,
+//                     ensemble_config: Some(EnsembleConfig {
+//                         voting_strategy: VotingStrategy::MajorityVote,
+//                         max_scan_time_ms: Some(800),     // 800ms timeout
+//                         min_models_required: Some(2),    // Need at least 2 models
+//                         early_exit_threshold: Some(0.85), // Slightly lower threshold for majority vote
+//                         member_configs: vec![
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::ProtectAiDeberta,
+//                                 confidence_threshold: 0.7,
+//                                 weight: 1.0,
+//                             },
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::DeepsetDeberta,
+//                                 confidence_threshold: 0.7,
+//                                 weight: 1.0,
+//                             },
+//                             EnsembleMember {
+//                                 scanner_type: ScannerType::LlamaPromptGuard2,
+//                                 confidence_threshold: 0.7,
+//                                 weight: 1.0,
+//                             },
+//                         ],
+//                     }),
+//                     hybrid_config: None,
+//                 },
+//             },
         ]
     }
 

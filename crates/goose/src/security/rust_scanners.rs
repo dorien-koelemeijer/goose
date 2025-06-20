@@ -29,25 +29,25 @@ impl OnnxDeepsetDebertaScanner {
             // Create ONNX environment
             let environment = Arc::new(Environment::builder().build()?);
             
-            // Load the ONNX model (look in project root)
-            let model_path = std::env::current_dir()
+            // Load the ONNX model (find project root reliably)
+            let project_root = std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .parent()
-                .and_then(|p| p.parent())
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join("onnx_models/deepset_deberta-v3-base-injection.onnx");
+                .ancestors()
+                .find(|path| path.join("onnx_models").exists())
+                .unwrap_or_else(|| std::path::Path::new("/Users/dkoelemeijer/Development/goose"))
+                .to_path_buf();
+            
+            let model_path = project_root.join("onnx_models/deepset_deberta-v3-base-injection.onnx");
+            
+            tracing::info!("Loading ONNX model from: {:?}", model_path);
+            
             let session = SessionBuilder::new(&environment)?
                 .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
                 .with_intra_threads(1)?
                 .with_model_from_file(&model_path)?;
             
             // Load tokenizer
-            let tokenizer_path = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .parent()
-                .and_then(|p| p.parent())
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join("onnx_models/tokenizer.json");
+            let tokenizer_path = project_root.join("onnx_models/tokenizer.json");
             let tokenizer = Tokenizer::from_file(tokenizer_path)
                 .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
             
