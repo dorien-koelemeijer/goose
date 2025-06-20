@@ -87,6 +87,17 @@ impl SecurityManager {
                     );
                     Some(Arc::new(OnnxDeepsetDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
                 }
+                ScannerType::RustProtectAiDeberta => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing ONNX ProtectAI DeBERTa security scanner"
+                    );
+                    Some(Arc::new(rust_scanners::OnnxProtectAiDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
                 ScannerType::OpenAiModeration => {
                     tracing::info!(
                         enabled = true,

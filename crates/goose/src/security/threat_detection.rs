@@ -1370,6 +1370,12 @@ impl ParallelEnsembleScanner {
                 ScannerType::DeepsetDeberta => {
                     Box::new(DeepsetDebertaScanner::new(member_config.confidence_threshold))
                 },
+                ScannerType::RustDeepsetDeberta => {
+                    Box::new(crate::security::rust_scanners::OnnxDeepsetDebertaScanner::new(member_config.confidence_threshold))
+                },
+                ScannerType::RustProtectAiDeberta => {
+                    Box::new(crate::security::rust_scanners::OnnxProtectAiDebertaScanner::new(member_config.confidence_threshold))
+                },
                 ScannerType::ProtectAiDeberta => {
                     Box::new(LlamaPromptGuardScanner::new(member_config.confidence_threshold))
                 },

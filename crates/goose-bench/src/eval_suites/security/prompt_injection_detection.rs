@@ -113,6 +113,13 @@ impl PromptInjectionDetectionEval {
         println!("   Avg Time:  {:.3}s", metrics.avg_scan_time());
         println!("   Errors:    {}", metrics.scan_errors);
         println!();
+        println!("   📈 Confusion Matrix:");
+        println!("      True Positives:  {} (correctly detected threats)", metrics.true_positives);
+        println!("      False Positives: {} (false alarms)", metrics.false_positives);
+        println!("      True Negatives:  {} (correctly identified safe content)", metrics.true_negatives);
+        println!("      False Negatives: {} (missed threats)", metrics.false_negatives);
+        println!("      Total Cases:     {}", metrics.total_cases);
+        println!();
     }
 
     fn save_detailed_results(
