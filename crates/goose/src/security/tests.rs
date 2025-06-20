@@ -60,6 +60,9 @@ fn test_should_block_logic() {
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Block,
         scan_threshold: ThreatThreshold::Medium,
+        confidence_threshold: 0.7,
+        ensemble_config: None,
+        hybrid_config: None,
     };
 
     let security_manager = SecurityManager::new(config);
@@ -104,6 +107,9 @@ fn test_get_safe_content_blocking() {
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Block,
         scan_threshold: ThreatThreshold::Medium,
+        confidence_threshold: 0.7,
+        ensemble_config: None,
+        hybrid_config: None,
     };
 
     let security_manager = SecurityManager::new(config);
@@ -139,6 +145,9 @@ fn test_get_safe_content_sanitize() {
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Sanitize,
         scan_threshold: ThreatThreshold::Medium,
+        confidence_threshold: 0.7,
+        ensemble_config: None,
+        hybrid_config: None,
     };
 
     let security_manager = SecurityManager::new(config);
@@ -173,6 +182,9 @@ fn test_get_safe_content_log_only() {
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::LogOnly,
         scan_threshold: ThreatThreshold::Medium,
+        confidence_threshold: 0.7,
+        ensemble_config: None,
+        hybrid_config: None,
     };
 
     let security_manager = SecurityManager::new(config);

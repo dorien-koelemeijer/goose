@@ -9,12 +9,25 @@ pub struct SecurityConfig {
     pub scan_threshold: ThreatThreshold,
     pub confidence_threshold: f32,  // Minimum confidence to flag as threat (0.0-1.0)
     pub ensemble_config: Option<EnsembleConfig>,  // Configuration for ensemble scanning
+    pub hybrid_config: Option<HybridTieredConfig>,  // Configuration for hybrid tiered scanning
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnsembleConfig {
     pub voting_strategy: VotingStrategy,
     pub member_configs: Vec<EnsembleMember>,
+    pub max_scan_time_ms: Option<u64>,      // Maximum time to wait for all models (e.g., 800ms)
+    pub min_models_required: Option<usize>, // Minimum models needed for decision (e.g., 2 out of 3)
+    pub early_exit_threshold: Option<f32>,  // If enough models agree with high confidence, exit early
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridTieredConfig {
+    pub primary_scanner: ScannerType,
+    pub primary_confidence_threshold: f32,
+    pub escalation_threshold: f32,  // If primary confidence is below this, use ensemble
+    pub ensemble_config: EnsembleConfig,
+    pub background_learning: bool,  // Run ensemble in background for all requests to improve tuning
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,10 +50,12 @@ pub enum ScannerType {
     MistralNemo,
     ProtectAiDeberta,    // Renamed from LlamaPromptGuard for clarity
     LlamaPromptGuard2,
-    DeepsetDeberta,      // deepset/deberta-v3-base-injection-v2 - often better precision
+    DeepsetDeberta,      // deepset/deberta-v3-base-injection-v2 - often better precision (Python-based)
+    RustDeepsetDeberta,  // Fast Rust implementation of deepset/deberta-v3-base-injection using Candle
     OpenAiModeration,    // OpenAI Moderation API - very low false positives
     ToxicBert,           // unitary/toxic-bert - good at context understanding
     ParallelEnsemble,    // Combines multiple models in parallel for better accuracy
+    HybridTiered,        // Fast primary + ensemble fallback for borderline cases
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -70,6 +85,7 @@ impl Default for SecurityConfig {
             scan_threshold: ThreatThreshold::Medium,
             confidence_threshold: 0.7,  // Default to 70% confidence to reduce false positives
             ensemble_config: None,  // No ensemble by default
+            hybrid_config: None,    // No hybrid by default
         }
     }
 }

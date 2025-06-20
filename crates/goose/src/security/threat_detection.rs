@@ -1570,3 +1570,4 @@ impl ContentScanner for ParallelEnsembleScanner {
         self.scan_with_ensemble(&content_with_context).await
     }
 }
+// HybridTieredScanner implementation

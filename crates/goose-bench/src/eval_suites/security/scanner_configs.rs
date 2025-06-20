@@ -25,6 +25,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.8,  // Higher confidence to reduce false positives
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
         ]
@@ -44,43 +45,48 @@ impl ScannerConfig {
 //                     scan_threshold: ThreatThreshold::Medium,
 //                     confidence_threshold: 0.7,
 //                     ensemble_config: None,
+//                     hybrid_config: None,
 //                 },
 //             },
-            // Parallel Ensemble with "Any Detection" strategy (most sensitive)
+            // Optimized Parallel Ensemble with "Any Detection" strategy + timeouts
             ScannerConfig {
-                name: "ensemble-any-detection".to_string(),
+                name: "ensemble-any-detection-optimized".to_string(),
                 config: SecurityConfig {
                     enabled: true,
                     scanner_type: ScannerType::ParallelEnsemble,
                     ollama_endpoint: "".to_string(),
                     action_policy: ActionPolicy::Block,
                     scan_threshold: ThreatThreshold::Medium,
-                    confidence_threshold: 0.7, // Not used for ensemble, but required
+                    confidence_threshold: 0.7,
                     ensemble_config: Some(EnsembleConfig {
                         voting_strategy: VotingStrategy::AnyDetection,
+                        max_scan_time_ms: Some(800),     // 800ms timeout
+                        min_models_required: Some(2),    // Need at least 2 models
+                        early_exit_threshold: Some(0.9), // If 2+ models agree with >90% confidence, exit early
                         member_configs: vec![
                             EnsembleMember {
-                                scanner_type: ScannerType::DeepsetDeberta,
+                                scanner_type: ScannerType::ProtectAiDeberta,  // Fastest first
                                 confidence_threshold: 0.7,
                                 weight: 1.0,
                             },
                             EnsembleMember {
-                                scanner_type: ScannerType::ProtectAiDeberta,
-                                confidence_threshold: 0.6, // Lower threshold for secondary model
+                                scanner_type: ScannerType::DeepsetDeberta,    // Second fastest
+                                confidence_threshold: 0.7,
                                 weight: 1.0,
                             },
                             EnsembleMember {
-                                scanner_type: ScannerType::LlamaPromptGuard2,
-                                confidence_threshold: 0.6, // Lower threshold for tertiary model
+                                scanner_type: ScannerType::LlamaPromptGuard2, // Slowest, but good accuracy
+                                confidence_threshold: 0.6,
                                 weight: 1.0,
                             },
                         ],
                     }),
+                    hybrid_config: None,
                 },
             },
-            // Parallel Ensemble with "Majority Vote" strategy (more conservative)
+            // Parallel Ensemble with "Majority Vote" strategy (more conservative) + optimizations
             ScannerConfig {
-                name: "ensemble-majority-vote".to_string(),
+                name: "ensemble-majority-vote-optimized".to_string(),
                 config: SecurityConfig {
                     enabled: true,
                     scanner_type: ScannerType::ParallelEnsemble,
@@ -90,14 +96,17 @@ impl ScannerConfig {
                     confidence_threshold: 0.7,
                     ensemble_config: Some(EnsembleConfig {
                         voting_strategy: VotingStrategy::MajorityVote,
+                        max_scan_time_ms: Some(800),     // 800ms timeout
+                        min_models_required: Some(2),    // Need at least 2 models
+                        early_exit_threshold: Some(0.85), // Slightly lower threshold for majority vote
                         member_configs: vec![
                             EnsembleMember {
-                                scanner_type: ScannerType::DeepsetDeberta,
+                                scanner_type: ScannerType::ProtectAiDeberta,
                                 confidence_threshold: 0.7,
                                 weight: 1.0,
                             },
                             EnsembleMember {
-                                scanner_type: ScannerType::ProtectAiDeberta,
+                                scanner_type: ScannerType::DeepsetDeberta,
                                 confidence_threshold: 0.7,
                                 weight: 1.0,
                             },
@@ -108,6 +117,7 @@ impl ScannerConfig {
                             },
                         ],
                     }),
+                    hybrid_config: None,
                 },
             },
         ]
@@ -127,6 +137,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.7,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             ScannerConfig {
@@ -139,6 +150,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.8,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             ScannerConfig {
@@ -151,6 +163,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.9,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             // Deepset DeBERTa (often better precision)
@@ -164,6 +177,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.7,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             ScannerConfig {
@@ -176,6 +190,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.8,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             // Llama Prompt Guard 2 with higher confidence
@@ -189,6 +204,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.8,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
             // ToxicBERT for comparison
@@ -202,6 +218,7 @@ impl ScannerConfig {
                     scan_threshold: ThreatThreshold::Medium,
                     confidence_threshold: 0.8,
                     ensemble_config: None,
+                    hybrid_config: None,
                 },
             },
         ]

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod content_scanner;
 pub mod model_pool;
+pub mod rust_scanners;
 pub mod threat_detection;
 
 #[cfg(test)]
@@ -16,6 +17,7 @@ use threat_detection::{
     DeepsetDebertaScanner, LlamaPromptGuard2Scanner, LlamaPromptGuardScanner, MistralNemoScanner,
     OpenAiModerationScanner, ParallelEnsembleScanner, ToxicBertScanner,
 };
+use rust_scanners::OnnxDeepsetDebertaScanner;
 
 pub struct SecurityManager {
     config: SecurityConfig,
@@ -70,9 +72,20 @@ impl SecurityManager {
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
                         confidence_threshold = config.confidence_threshold,
-                        "Initializing Deepset DeBERTa security scanner"
+                        "Initializing Deepset DeBERTa security scanner (Python-based)"
                     );
                     Some(Arc::new(DeepsetDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
+                }
+                ScannerType::RustDeepsetDeberta => {
+                    tracing::info!(
+                        enabled = true,
+                        scanner = ?config.scanner_type,
+                        action_policy = ?config.action_policy,
+                        threshold = ?config.scan_threshold,
+                        confidence_threshold = config.confidence_threshold,
+                        "Initializing ONNX Deepset DeBERTa security scanner"
+                    );
+                    Some(Arc::new(OnnxDeepsetDebertaScanner::new(config.confidence_threshold)) as Arc<dyn ContentScanner>)
                 }
                 ScannerType::OpenAiModeration => {
                     tracing::info!(
@@ -119,6 +132,10 @@ impl SecurityManager {
                         tracing::error!("ParallelEnsemble scanner type requires ensemble_config");
                         None
                     }
+                }
+                ScannerType::HybridTiered => {
+                    tracing::error!("HybridTiered scanner not yet implemented");
+                    None
                 }
                 ScannerType::None => {
                     tracing::info!("Security scanner type is None, scanner will be disabled");
