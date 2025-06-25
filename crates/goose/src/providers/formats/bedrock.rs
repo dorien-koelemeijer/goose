@@ -31,6 +31,10 @@ pub fn to_bedrock_message_content(content: &MessageContent) -> Result<bedrock::C
         MessageContent::ToolConfirmationRequest(_tool_confirmation_request) => {
             bedrock::ContentBlock::Text("".to_string())
         }
+        MessageContent::SecurityConfirmationRequest(_security_confirmation_request) => {
+            // Skip security confirmation requests - these are handled by the UI
+            bedrock::ContentBlock::Text("".to_string())
+        }
         MessageContent::Image(_) => {
             bail!("Image content is not supported by Bedrock provider yet")
         }

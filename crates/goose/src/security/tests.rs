@@ -44,9 +44,9 @@ async fn test_threat_level_ordering() {
 async fn test_security_config_default() {
     let config = SecurityConfig::default();
     assert!(!config.enabled);
-    assert_eq!(config.scanner_type, ScannerType::MistralNemo);
+    assert_eq!(config.scanner_type, ScannerType::ParallelEnsemble); // Updated to match our new default
     assert_eq!(config.ollama_endpoint, "http://localhost:11434");
-    assert_eq!(config.action_policy, ActionPolicy::Block);
+    assert_eq!(config.action_policy, ActionPolicy::AskUser); // Updated to match our new default
     assert_eq!(config.scan_threshold, ThreatThreshold::Medium);
 }
 

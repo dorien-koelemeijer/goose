@@ -7,6 +7,18 @@ pub mod threat_detection;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod test_types;
+
+#[cfg(test)]
+mod test_onnx;
+
+#[cfg(test)]
+mod test_scanner;
+
+#[cfg(test)]
+mod test_ensemble;
+
 use anyhow::Result;
 use config::{ActionPolicy, ScannerType, SecurityConfig, ThreatThreshold};
 use content_scanner::{ContentScanner, ScanResult, ThreatLevel};
@@ -301,6 +313,39 @@ impl SecurityManager {
         }
     }
 
+    pub fn should_ask_user(&self, scan_result: &ScanResult) -> bool {
+        if !self.config.enabled || self.config.action_policy != ActionPolicy::AskUser {
+            return false;
+        }
+
+        // Check if threat level is at or above threshold
+        match self.config.scan_threshold {
+            ThreatThreshold::Any => scan_result.threat_level != ThreatLevel::Safe,
+            ThreatThreshold::Low => {
+                matches!(
+                    scan_result.threat_level,
+                    ThreatLevel::Low
+                        | ThreatLevel::Medium
+                        | ThreatLevel::High
+                        | ThreatLevel::Critical
+                )
+            }
+            ThreatThreshold::Medium => {
+                matches!(
+                    scan_result.threat_level,
+                    ThreatLevel::Medium | ThreatLevel::High | ThreatLevel::Critical
+                )
+            }
+            ThreatThreshold::High => {
+                matches!(
+                    scan_result.threat_level,
+                    ThreatLevel::High | ThreatLevel::Critical
+                )
+            }
+            ThreatThreshold::Critical => scan_result.threat_level == ThreatLevel::Critical,
+        }
+    }
+
     pub fn get_safe_content(&self, original: &[Content], scan_result: &ScanResult) -> Vec<Content> {
         if !self.is_enabled() || self.config.action_policy == ActionPolicy::LogOnly {
             tracing::info!(
@@ -310,6 +355,16 @@ impl SecurityManager {
                 } else {
                     "LogOnly"
                 }
+            );
+            return original.to_vec();
+        }
+
+        // For AskUser policy, we don't modify content here - that's handled by the confirmation flow
+        if self.config.action_policy == ActionPolicy::AskUser {
+            tracing::info!(
+                threat = ?scan_result.threat_level,
+                policy = "AskUser",
+                "Security scanner: content will be subject to user confirmation"
             );
             return original.to_vec();
         }

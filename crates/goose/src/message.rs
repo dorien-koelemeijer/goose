@@ -87,6 +87,16 @@ pub struct FrontendToolRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityConfirmationRequest {
+    pub id: String,
+    pub threat_level: String,
+    pub explanation: String,
+    pub original_content: String,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ContextLengthExceeded {
     pub msg: String,
 }
@@ -105,6 +115,7 @@ pub enum MessageContent {
     ToolRequest(ToolRequest),
     ToolResponse(ToolResponse),
     ToolConfirmationRequest(ToolConfirmationRequest),
+    SecurityConfirmationRequest(SecurityConfirmationRequest),
     FrontendToolRequest(FrontendToolRequest),
     Thinking(ThinkingContent),
     RedactedThinking(RedactedThinkingContent),
@@ -152,6 +163,22 @@ impl MessageContent {
             id: id.into(),
             tool_name,
             arguments,
+            prompt,
+        })
+    }
+
+    pub fn security_confirmation_request<S: Into<String>>(
+        id: S,
+        threat_level: String,
+        explanation: String,
+        original_content: String,
+        prompt: Option<String>,
+    ) -> Self {
+        MessageContent::SecurityConfirmationRequest(SecurityConfirmationRequest {
+            id: id.into(),
+            threat_level,
+            explanation,
+            original_content,
             prompt,
         })
     }
@@ -210,6 +237,14 @@ impl MessageContent {
     pub fn as_tool_confirmation_request(&self) -> Option<&ToolConfirmationRequest> {
         if let MessageContent::ToolConfirmationRequest(ref tool_confirmation_request) = self {
             Some(tool_confirmation_request)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_security_confirmation_request(&self) -> Option<&SecurityConfirmationRequest> {
+        if let MessageContent::SecurityConfirmationRequest(ref security_confirmation_request) = self {
+            Some(security_confirmation_request)
         } else {
             None
         }
@@ -371,6 +406,20 @@ impl Message {
     ) -> Self {
         self.with_content(MessageContent::tool_confirmation_request(
             id, tool_name, arguments, prompt,
+        ))
+    }
+
+    /// Add a security confirmation request to the message
+    pub fn with_security_confirmation_request<S: Into<String>>(
+        self,
+        id: S,
+        threat_level: String,
+        explanation: String,
+        original_content: String,
+        prompt: Option<String>,
+    ) -> Self {
+        self.with_content(MessageContent::security_confirmation_request(
+            id, threat_level, explanation, original_content, prompt,
         ))
     }
 

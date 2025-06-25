@@ -62,10 +62,11 @@ pub enum ScannerType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ActionPolicy {
-    Block,    // Block content above threshold
-    Sanitize, // Use sanitized version if available
-    Warn,     // Just warn but allow content
-    LogOnly,  // Only log, no intervention
+    Block,        // Block content above threshold
+    Sanitize,     // Use sanitized version if available
+    Warn,         // Just warn but allow content
+    LogOnly,      // Only log, no intervention
+    AskUser,      // Ask user for confirmation on threats above threshold
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,12 +82,29 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            scanner_type: ScannerType::MistralNemo,
+            scanner_type: ScannerType::ParallelEnsemble,  // Use the best performing ensemble
             ollama_endpoint: "http://localhost:11434".to_string(),
-            action_policy: ActionPolicy::Block,
+            action_policy: ActionPolicy::AskUser,  // Ask user for confirmation by default
             scan_threshold: ThreatThreshold::Medium,
             confidence_threshold: 0.7,  // Default to 70% confidence to reduce false positives
-            ensemble_config: None,  // No ensemble by default
+            ensemble_config: Some(EnsembleConfig {
+                voting_strategy: VotingStrategy::AnyDetection,  // Flag if any model detects threat
+                member_configs: vec![
+                    EnsembleMember {
+                        scanner_type: ScannerType::RustDeepsetDeberta,
+                        confidence_threshold: 0.7,
+                        weight: 1.0,
+                    },
+                    EnsembleMember {
+                        scanner_type: ScannerType::RustProtectAiDeberta,
+                        confidence_threshold: 0.7,
+                        weight: 1.0,
+                    },
+                ],
+                max_scan_time_ms: Some(800),  // 800ms timeout
+                min_models_required: Some(1), // At least one model must respond
+                early_exit_threshold: Some(0.9), // If one model is very confident, exit early
+            }),
             hybrid_config: None,    // No hybrid by default
         }
     }
