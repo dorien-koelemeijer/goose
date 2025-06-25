@@ -6,11 +6,11 @@ default:
 
 # Default release command
 release-binary:
-    @echo "Building release version..."
-    cargo build --release
+    @echo "Building release version with security-onnx features..."
+    cargo build --release -p goose-server --features security-onnx
     @just copy-binary
     @echo "Generating OpenAPI schema..."
-    cargo run -p goose-server --bin generate_schema
+    cargo run -p goose-server --bin generate_schema --features security-onnx
 
 # Build Windows executable
 release-windows:
@@ -58,6 +58,14 @@ copy-binary BUILD_MODE="release":
     else \
         echo "Binary not found in target/{{BUILD_MODE}}"; \
         exit 1; \
+    fi
+    @if [ -f ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ]; then \
+        echo "Copying ONNX runtime library from target/{{BUILD_MODE}}..."; \
+        cp -p ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ./ui/desktop/src/bin/; \
+        echo "Fixing rpath for ONNX runtime library..."; \
+        install_name_tool -add_rpath @executable_path ./ui/desktop/src/bin/goosed 2>/dev/null || true; \
+    else \
+        echo "ONNX runtime library not found, skipping..."; \
     fi
     @if [ -f ./target/{{BUILD_MODE}}/goose ]; then \
         echo "Copying goose CLI binary from target/{{BUILD_MODE}}..."; \
@@ -263,8 +271,8 @@ status-temporal:
 
 # Run UI with debug build
 run-dev:
-    @echo "Building development version..."
-    cargo build
+    @echo "Building development version with security-onnx features..."
+    cargo build -p goose-server --features security-onnx
     @just copy-binary debug
     @echo "Running UI..."
     cd ui/desktop && npm run start-gui

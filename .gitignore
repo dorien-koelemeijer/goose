@@ -28,6 +28,15 @@ target/
 ui/desktop/src/bin/goose_ffi.dll
 ui/desktop/src/bin/goose_llm.dll
 
+# ONNX models (too large for git, download separately)
+onnx_models/
+*.onnx
+
+# Security test artifacts
+security_test*
+test_onnx*
+test_config*
+
 # Hermit
 .hermit/
 

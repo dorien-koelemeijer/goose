@@ -14,11 +14,12 @@ use crate::agents::sub_recipe_manager::SubRecipeManager;
 use crate::config::{Config, ExtensionConfigManager, PermissionManager};
 use crate::message::Message;
 use crate::permission::permission_judge::check_tool_permissions;
-use crate::permission::PermissionConfirmation;
+use crate::permission::{PermissionConfirmation, SecurityConfirmation};
 use crate::providers::base::Provider;
 use crate::providers::errors::ProviderError;
 use crate::recipe::{Author, Recipe, Settings, SubRecipe};
 use crate::scheduler_trait::SchedulerTrait;
+use crate::security::SecurityManager;
 use crate::tool_monitor::{ToolCall, ToolMonitor};
 use regex::Regex;
 use serde_json::Value;
@@ -59,11 +60,14 @@ pub struct Agent {
     pub(super) prompt_manager: Mutex<PromptManager>,
     pub(super) confirmation_tx: mpsc::Sender<(String, PermissionConfirmation)>,
     pub(super) confirmation_rx: Mutex<mpsc::Receiver<(String, PermissionConfirmation)>>,
+    pub(super) security_confirmation_tx: mpsc::Sender<(String, SecurityConfirmation)>,
+    pub(super) security_confirmation_rx: Mutex<mpsc::Receiver<(String, SecurityConfirmation)>>,
     pub(super) tool_result_tx: mpsc::Sender<(String, ToolResult<Vec<Content>>)>,
     pub(super) tool_result_rx: ToolResultReceiver,
     pub(super) tool_monitor: Mutex<Option<ToolMonitor>>,
     pub(super) router_tool_selector: Mutex<Option<Arc<Box<dyn RouterToolSelector>>>>,
     pub(super) scheduler_service: Mutex<Option<Arc<dyn SchedulerTrait>>>,
+    pub(super) security_manager: Mutex<Option<SecurityManager>>,
 }
 
 #[derive(Clone, Debug)]
@@ -77,6 +81,7 @@ impl Agent {
     pub fn new() -> Self {
         // Create channels with buffer size 32 (adjust if needed)
         let (confirm_tx, confirm_rx) = mpsc::channel(32);
+        let (security_confirm_tx, security_confirm_rx) = mpsc::channel(32);
         let (tool_tx, tool_rx) = mpsc::channel(32);
 
         Self {
@@ -88,11 +93,14 @@ impl Agent {
             prompt_manager: Mutex::new(PromptManager::new()),
             confirmation_tx: confirm_tx,
             confirmation_rx: Mutex::new(confirm_rx),
+            security_confirmation_tx: security_confirm_tx,
+            security_confirmation_rx: Mutex::new(security_confirm_rx),
             tool_result_tx: tool_tx,
             tool_result_rx: Arc::new(Mutex::new(tool_rx)),
             tool_monitor: Mutex::new(None),
             router_tool_selector: Mutex::new(None),
             scheduler_service: Mutex::new(None),
+            security_manager: Mutex::new(None),
         }
     }
 
@@ -581,6 +589,22 @@ impl Agent {
         }
     }
 
+    pub async fn configure_security(&self, config: crate::security::config::SecurityConfig) {
+        let security_manager = SecurityManager::new(config);
+        let mut manager_lock = self.security_manager.lock().await;
+        *manager_lock = Some(security_manager);
+    }
+
+    pub async fn handle_security_confirmation(
+        &self,
+        request_id: String,
+        confirmation: SecurityConfirmation,
+    ) {
+        if let Err(e) = self.security_confirmation_tx.send((request_id, confirmation)).await {
+            error!("Failed to send security confirmation: {}", e);
+        }
+    }
+
     #[instrument(skip(self, messages, session), fields(user_message))]
     pub async fn reply(
         &self,
@@ -589,6 +613,47 @@ impl Agent {
     ) -> anyhow::Result<BoxStream<'_, anyhow::Result<AgentEvent>>> {
         let mut messages = messages.to_vec();
         let reply_span = tracing::Span::current();
+
+        // Security scanning: scan all incoming messages for threats
+        if let Some(security_manager) = &*self.security_manager.lock().await {
+            for message in &messages {
+                // Extract text content from message
+                let text_contents: Vec<String> = message.content.iter()
+                    .filter_map(|c| c.as_text().map(String::from))
+                    .collect();
+                
+                if !text_contents.is_empty() {
+                    let combined_text = text_contents.join("\n");
+                    let content = vec![Content::text(combined_text)];
+                    
+                    if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
+                        if security_manager.should_ask_user(&scan_result) {
+                            // TODO: Implement security confirmation request to UI
+                            tracing::warn!(
+                                threat_level = ?scan_result.threat_level,
+                                explanation = %scan_result.explanation,
+                                "Security threat detected in user message, would ask user for confirmation"
+                            );
+                        } else if security_manager.should_block(&scan_result) {
+                            tracing::error!(
+                                threat_level = ?scan_result.threat_level,
+                                explanation = %scan_result.explanation,
+                                "Security threat detected in user message, blocking"
+                            );
+                            // Return error stream that blocks the message
+                            return Ok(Box::pin(async_stream::try_stream! {
+                                yield AgentEvent::Message(
+                                    Message::assistant().with_text(format!(
+                                        "[SECURITY WARNING] Message blocked due to detected threat: {}",
+                                        scan_result.explanation
+                                    ))
+                                );
+                            }));
+                        }
+                    }
+                }
+            }
+        }
 
         // Load settings from config
         let config = Config::global();

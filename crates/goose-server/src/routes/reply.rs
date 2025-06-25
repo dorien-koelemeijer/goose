@@ -15,7 +15,7 @@ use goose::{
     permission::permission_confirmation::PrincipalType,
 };
 use goose::{
-    permission::{Permission, PermissionConfirmation},
+    permission::{Permission, PermissionConfirmation, SecurityPermission, SecurityConfirmation},
     session,
 };
 use mcp_core::{protocol::JsonRpcMessage, role::Role, Content, ToolResult};
@@ -210,20 +210,7 @@ async fn handler(
         };
 
         let mut all_messages = messages.clone();
-        let session_path = match session::get_path(session::Identifier::Name(session_id.clone())) {
-            Ok(path) => path,
-            Err(e) => {
-                tracing::error!("Failed to get session path: {}", e);
-                let _ = stream_event(
-                    MessageEvent::Error {
-                        error: format!("Failed to get session path: {}", e),
-                    },
-                    &tx,
-                )
-                .await;
-                return;
-            }
-        };
+        let session_path = session::get_path(session::Identifier::Name(session_id.clone()));
 
         loop {
             tokio::select! {
@@ -403,21 +390,13 @@ async fn ask_handler(
         all_messages.push(response_message);
     }
 
-    let session_path = match session::get_path(session::Identifier::Name(session_id.clone())) {
-        Ok(path) => path,
-        Err(e) => {
-            tracing::error!("Failed to get session path: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    let session_path = session::get_path(session::Identifier::Name(session_id.clone()));
 
-    let session_path_clone = session_path.clone();
+    let session_path = session_path.clone();
     let messages = all_messages.clone();
     let provider = Arc::clone(provider.as_ref().unwrap());
     tokio::spawn(async move {
-        if let Err(e) =
-            session::persist_messages(&session_path_clone, &messages, Some(provider)).await
-        {
+        if let Err(e) = session::persist_messages(&session_path, &messages, Some(provider)).await {
             tracing::error!("Failed to store session history: {:?}", e);
         }
     });
@@ -433,6 +412,13 @@ pub struct PermissionConfirmationRequest {
     #[serde(default = "default_principal_type")]
     principal_type: PrincipalType,
     action: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SecurityConfirmationRequest {
+    id: String,
+    permission: String, // "allow_once", "deny_once", "always_allow", "never_allow"
+    threat_level: String,
 }
 
 fn default_principal_type() -> PrincipalType {
@@ -480,6 +466,61 @@ pub async fn confirm_permission(
     Ok(Json(Value::Object(serde_json::Map::new())))
 }
 
+#[utoipa::path(
+    post,
+    path = "/security/confirm",
+    request_body = SecurityConfirmationRequest,
+    responses(
+        (status = 200, description = "Security permission action is confirmed", body = Value),
+        (status = 401, description = "Unauthorized - invalid secret key"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn confirm_security_permission(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<SecurityConfirmationRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    verify_secret_key(&headers, &state)?;
+
+    let agent = state
+        .get_agent()
+        .await
+        .map_err(|_| StatusCode::PRECONDITION_FAILED)?;
+
+    let security_permission = match request.permission.as_str() {
+        "allow_once" => SecurityPermission::AllowOnce,
+        "deny_once" => SecurityPermission::DenyOnce,
+        "always_allow" => SecurityPermission::AlwaysAllow,
+        "never_allow" => SecurityPermission::NeverAllow,
+        _ => SecurityPermission::DenyOnce, // Default to deny
+    };
+
+    agent
+        .handle_security_confirmation(
+            request.id.clone(),
+            SecurityConfirmation {
+                permission: security_permission,
+                threat_level: request.threat_level.clone(),
+            },
+        )
+        .await;
+
+    tracing::info!(
+        "Security confirmation processed: id={}, permission={}, threat_level={}",
+        request.id,
+        request.permission,
+        request.threat_level
+    );
+
+    Ok(Json(json!({
+        "status": "confirmed",
+        "id": request.id,
+        "permission": request.permission,
+        "threat_level": request.threat_level
+    })))
+}
+
 #[derive(Debug, Deserialize)]
 struct ToolResultRequest {
     id: String,
@@ -523,6 +564,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/reply", post(handler))
         .route("/ask", post(ask_handler))
         .route("/confirm", post(confirm_permission))
+        .route("/security/confirm", post(confirm_security_permission))
         .route("/tool_result", post(submit_tool_result))
         .with_state(state)
 }

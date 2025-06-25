@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = ["security-basic"]
+security-basic = []  # Basic security scanning without ONNX
+security-onnx = ["ort", "ndarray"]  # Full ONNX model scanning
+
 [build-dependencies]
 tokio = { version = "1.43", features = ["full"] }
 reqwest = { version = "0.12.9", features = ["json", "rustls-tls-native-roots"], default-features = false }
@@ -82,6 +87,11 @@ tokio-stream = "0.1.17"
 # Vector database for tool selection
 lancedb = "0.13"
 arrow = "52.2"
+
+# ONNX Runtime for fast ML inference (optional)
+ort = { version = "1.16", features = ["download-binaries", "copy-dylibs"], optional = true }
+ndarray = { version = "0.15", optional = true }
+tempfile = "3.15.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3", features = ["wincred"] }
