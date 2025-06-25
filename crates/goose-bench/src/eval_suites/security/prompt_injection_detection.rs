@@ -2,7 +2,7 @@ use crate::bench_session::BenchAgent;
 use crate::bench_work_dir::BenchmarkWorkDir;
 use crate::eval_suites::security::{
     dataset_loader::PromptInjectionDatasetLoader,
-    metrics::{EvaluationMetrics, is_threat},
+    metrics::{is_threat, EvaluationMetrics},
     scanner_configs::ScannerConfig,
 };
 use crate::eval_suites::{EvalMetricValue, Evaluation, ExtensionRequirements};
@@ -62,7 +62,7 @@ impl PromptInjectionDetectionEval {
 
     async fn evaluate_scanner(&self, config: &ScannerConfig) -> Result<EvaluationMetrics> {
         println!("🔍 Testing: {}", config.name);
-        
+
         let security_manager = SecurityManager::new(config.config.clone());
         let mut metrics = EvaluationMetrics::new();
 
@@ -84,7 +84,7 @@ impl PromptInjectionDetectionEval {
                     let scan_time = start_time.elapsed().as_secs_f64();
                     let detected_threat = is_threat(&scan_result.threat_level);
                     let expected_threat = is_threat(&test_case.expected_threat_level);
-                    
+
                     metrics.record_result(detected_threat, expected_threat, scan_time);
                 }
                 Ok(None) => {
@@ -114,10 +114,22 @@ impl PromptInjectionDetectionEval {
         println!("   Errors:    {}", metrics.scan_errors);
         println!();
         println!("   📈 Confusion Matrix:");
-        println!("      True Positives:  {} (correctly detected threats)", metrics.true_positives);
-        println!("      False Positives: {} (false alarms)", metrics.false_positives);
-        println!("      True Negatives:  {} (correctly identified safe content)", metrics.true_negatives);
-        println!("      False Negatives: {} (missed threats)", metrics.false_negatives);
+        println!(
+            "      True Positives:  {} (correctly detected threats)",
+            metrics.true_positives
+        );
+        println!(
+            "      False Positives: {} (false alarms)",
+            metrics.false_positives
+        );
+        println!(
+            "      True Negatives:  {} (correctly identified safe content)",
+            metrics.true_negatives
+        );
+        println!(
+            "      False Negatives: {} (missed threats)",
+            metrics.false_negatives
+        );
         println!("      Total Cases:     {}", metrics.total_cases);
         println!();
     }
@@ -128,16 +140,19 @@ impl PromptInjectionDetectionEval {
         all_metrics: &[(String, EvalMetricValue)],
     ) -> Result<()> {
         let results_path = run_loc.base_path.join("prompt_injection_results.json");
-        
+
         let detailed_results = serde_json::json!({
             "test_suite": self.test_suite,
             "scanner_configs": self.scanner_configs.iter().map(|c| &c.name).collect::<Vec<_>>(),
             "metrics": all_metrics
         });
 
-        fs::write(&results_path, serde_json::to_string_pretty(&detailed_results)?)?;
+        fs::write(
+            &results_path,
+            serde_json::to_string_pretty(&detailed_results)?,
+        )?;
         println!("💾 Detailed results saved to: {:?}", results_path);
-        
+
         Ok(())
     }
 }
@@ -150,9 +165,11 @@ impl Evaluation for PromptInjectionDetectionEval {
         run_loc: &mut BenchmarkWorkDir,
     ) -> Result<Vec<(String, EvalMetricValue)>> {
         println!("🚀 Starting Prompt Injection Detection Evaluation");
-        println!("📋 Testing {} configurations on {} test cases", 
-                 self.scanner_configs.len(), 
-                 self.test_suite.test_cases.len());
+        println!(
+            "📋 Testing {} configurations on {} test cases",
+            self.scanner_configs.len(),
+            self.test_suite.test_cases.len()
+        );
         println!();
 
         let mut all_metrics = Vec::new();

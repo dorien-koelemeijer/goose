@@ -7,7 +7,7 @@ mod onnx_runtime_tests {
     #[test]
     fn test_onnx_runtime_environment() {
         println!("🧪 Testing ONNX Runtime Environment...");
-        
+
         let environment = Environment::builder().build();
         match environment {
             Ok(env) => {
@@ -23,11 +23,11 @@ mod onnx_runtime_tests {
     #[test]
     fn test_onnx_models_directory() {
         println!("🧪 Testing ONNX models directory...");
-        
+
         let model_dir = Path::new("onnx_models");
         if model_dir.exists() {
             println!("✅ ONNX models directory found: {:?}", model_dir);
-            
+
             if let Ok(entries) = std::fs::read_dir(model_dir) {
                 let mut model_count = 0;
                 for entry in entries {
@@ -39,7 +39,7 @@ mod onnx_runtime_tests {
                         }
                     }
                 }
-                
+
                 if model_count > 0 {
                     println!("   ✅ Found {} ONNX model(s)", model_count);
                 } else {
@@ -55,38 +55,41 @@ mod onnx_runtime_tests {
     #[test]
     fn test_onnx_model_loading_if_available() {
         println!("🧪 Testing ONNX model loading...");
-        
+
         let environment = match Environment::builder().build() {
             Ok(env) => Arc::new(env),
             Err(e) => {
-                println!("⚠️  Skipping model loading test - Environment creation failed: {}", e);
+                println!(
+                    "⚠️  Skipping model loading test - Environment creation failed: {}",
+                    e
+                );
                 return;
             }
         };
-        
+
         let model_dir = Path::new("onnx_models");
         if !model_dir.exists() {
             println!("⚠️  Skipping model loading test - No onnx_models directory");
             return;
         }
-        
+
         let deepset_model = model_dir.join("deepset_deberta-v3-base-injection.onnx");
         let protectai_model = model_dir.join("protectai_deberta-v3-base-prompt-injection-v2.onnx");
-        
+
         let mut tested_any = false;
-        
+
         if deepset_model.exists() {
             println!("🔍 Testing Deepset DeBERTa model...");
             test_single_model(&environment, &deepset_model);
             tested_any = true;
         }
-        
+
         if protectai_model.exists() {
             println!("🔍 Testing ProtectAI DeBERTa model...");
             test_single_model(&environment, &protectai_model);
             tested_any = true;
         }
-        
+
         if !tested_any {
             println!("⚠️  No expected model files found for testing");
             println!("   Expected: deepset_deberta-v3-base-injection.onnx");

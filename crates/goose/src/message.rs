@@ -243,7 +243,8 @@ impl MessageContent {
     }
 
     pub fn as_security_confirmation_request(&self) -> Option<&SecurityConfirmationRequest> {
-        if let MessageContent::SecurityConfirmationRequest(ref security_confirmation_request) = self {
+        if let MessageContent::SecurityConfirmationRequest(ref security_confirmation_request) = self
+        {
             Some(security_confirmation_request)
         } else {
             None
@@ -419,7 +420,11 @@ impl Message {
         prompt: Option<String>,
     ) -> Self {
         self.with_content(MessageContent::security_confirmation_request(
-            id, threat_level, explanation, original_content, prompt,
+            id,
+            threat_level,
+            explanation,
+            original_content,
+            prompt,
         ))
     }
 

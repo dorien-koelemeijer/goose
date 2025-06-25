@@ -61,6 +61,15 @@ export interface ToolConfirmationRequestMessageContent {
   prompt?: string;
 }
 
+export interface SecurityConfirmationRequestMessageContent {
+  type: 'securityConfirmationRequest';
+  id: string;
+  threatLevel: string;
+  explanation: string;
+  originalContent: string;
+  prompt?: string;
+}
+
 export interface ExtensionCall {
   name: string;
   arguments: Record<string, unknown>;
@@ -89,6 +98,7 @@ export type MessageContent =
   | ToolRequestMessageContent
   | ToolResponseMessageContent
   | ToolConfirmationRequestMessageContent
+  | SecurityConfirmationRequestMessageContent
   | ContextLengthExceededContent
   | SummarizationRequestedContent;
 
@@ -222,6 +232,15 @@ export function getToolConfirmationContent(
   return message.content.find(
     (content): content is ToolConfirmationRequestMessageContent =>
       content.type === 'toolConfirmationRequest'
+  );
+}
+
+export function getSecurityConfirmationContent(
+  message: Message
+): SecurityConfirmationRequestMessageContent | undefined {
+  return message.content.find(
+    (content): content is SecurityConfirmationRequestMessageContent =>
+      content.type === 'securityConfirmationRequest'
   );
 }
 

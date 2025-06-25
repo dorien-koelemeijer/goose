@@ -13,6 +13,9 @@ mod tool_router_index_manager;
 pub(crate) mod tool_vectordb;
 mod types;
 
+#[cfg(test)]
+mod security_integration_test;
+
 pub use agent::{Agent, AgentEvent};
 pub use extension::ExtensionConfig;
 pub use extension_manager::ExtensionManager;

@@ -13,15 +13,17 @@ use mcp_core::protocol::JsonRpcMessage;
 use crate::config::{Config, ExtensionConfigManager, PermissionManager};
 use crate::message::Message;
 use crate::permission::permission_judge::check_tool_permissions;
-use crate::permission::PermissionConfirmation;
+use crate::permission::{PermissionConfirmation, SecurityConfirmation};
 use crate::providers::base::Provider;
 use crate::providers::errors::ProviderError;
 use crate::recipe::{Author, Recipe};
+use crate::security::{config::SecurityConfig, SecurityManager};
 use crate::tool_monitor::{ToolCall, ToolMonitor};
 use regex::Regex;
 use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, instrument};
+use uuid;
 
 use crate::agents::extension::{ExtensionConfig, ExtensionError, ExtensionResult, ToolInfo};
 use crate::agents::extension_manager::{get_parameter_names, ExtensionManager};
@@ -59,6 +61,9 @@ pub struct Agent {
     pub(super) tool_result_rx: ToolResultReceiver,
     pub(super) tool_monitor: Mutex<Option<ToolMonitor>>,
     pub(super) router_tool_selector: Mutex<Option<Arc<Box<dyn RouterToolSelector>>>>,
+    pub(super) security_manager: Mutex<Option<SecurityManager>>,
+    pub(super) security_confirmation_tx: mpsc::Sender<(String, SecurityConfirmation)>,
+    pub(super) security_confirmation_rx: Mutex<mpsc::Receiver<(String, SecurityConfirmation)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +77,7 @@ impl Agent {
         // Create channels with buffer size 32 (adjust if needed)
         let (confirm_tx, confirm_rx) = mpsc::channel(32);
         let (tool_tx, tool_rx) = mpsc::channel(32);
+        let (security_confirm_tx, security_confirm_rx) = mpsc::channel(32);
 
         Self {
             provider: Mutex::new(None),
@@ -85,6 +91,9 @@ impl Agent {
             tool_result_rx: Arc::new(Mutex::new(tool_rx)),
             tool_monitor: Mutex::new(None),
             router_tool_selector: Mutex::new(None),
+            security_manager: Mutex::new(None),
+            security_confirmation_tx: security_confirm_tx,
+            security_confirmation_rx: Mutex::new(security_confirm_rx),
         }
     }
 
@@ -101,6 +110,82 @@ impl Agent {
     pub async fn reset_tool_monitor(&self) {
         if let Some(monitor) = self.tool_monitor.lock().await.as_mut() {
             monitor.reset();
+        }
+    }
+
+    pub async fn configure_security(&self, config: SecurityConfig) {
+        let mut security_manager = self.security_manager.lock().await;
+        *security_manager = Some(SecurityManager::new(config));
+    }
+
+    /// Scan and score any message content for security threats
+    /// This is called for ALL messages added to context (user, assistant, MCP)
+    pub async fn scan_and_score_message(&self, message: &Message) -> Option<(f32, String)> {
+        let security_manager = self.security_manager.lock().await;
+        if let Some(ref security_manager) = *security_manager {
+            // Extract content for scanning
+            let content_to_scan: Vec<mcp_core::Content> = message.content
+                .iter()
+                .filter_map(|msg_content| {
+                    if let Some(text) = msg_content.as_text() {
+                        Some(mcp_core::Content::text(text))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !content_to_scan.is_empty() {
+                if let Ok(Some(scan_result)) = security_manager.scan_content(&content_to_scan).await {
+                    let score = match scan_result.threat_level {
+                        crate::security::content_scanner::ThreatLevel::Safe => 0.0,
+                        crate::security::content_scanner::ThreatLevel::Low => 0.25,
+                        crate::security::content_scanner::ThreatLevel::Medium => 0.5,
+                        crate::security::content_scanner::ThreatLevel::High => 0.75,
+                        crate::security::content_scanner::ThreatLevel::Critical => 1.0,
+                    };
+
+                    tracing::debug!(
+                        role = ?message.role,
+                        score = score,
+                        threat_level = ?scan_result.threat_level,
+                        explanation = %scan_result.explanation,
+                        "Message security score"
+                    );
+
+                    // Log suspicious content for future review (CSP-style)
+                    if score >= 0.5 {
+                        tracing::warn!(
+                            role = ?message.role,
+                            score = score,
+                            threat_level = ?scan_result.threat_level,
+                            explanation = %scan_result.explanation,
+                            content_preview = %content_to_scan.iter()
+                                .filter_map(|c| c.as_text().map(|s| s.chars().take(100).collect::<String>()))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                            "FLAGGED: Suspicious content detected for review"
+                        );
+                    }
+
+                    return Some((score, scan_result.explanation));
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn handle_security_confirmation(
+        &self,
+        request_id: String,
+        confirmation: SecurityConfirmation,
+    ) {
+        if let Err(e) = self
+            .security_confirmation_tx
+            .send((request_id, confirmation))
+            .await
+        {
+            error!("Failed to send security confirmation: {}", e);
         }
     }
 }
@@ -363,6 +448,48 @@ impl Agent {
     }
 
     pub async fn add_extension(&self, extension: ExtensionConfig) -> ExtensionResult<()> {
+        // Security scanning of extension configuration before installation
+        let security_manager = self.security_manager.lock().await;
+        if let Some(ref security_manager) = *security_manager {
+            // Create content to scan from extension metadata
+            let extension_content = vec![
+                mcp_core::Content::text(format!("Extension Name: {}", extension.name())),
+                mcp_core::Content::text(format!(
+                    "Extension Configuration: {}",
+                    serde_json::to_string_pretty(&extension)
+                        .unwrap_or_else(|_| "Unable to serialize".to_string())
+                )),
+            ];
+
+            if let Ok(Some(scan_result)) = security_manager.scan_content(&extension_content).await {
+                if security_manager.should_block(&scan_result) {
+                    tracing::warn!(
+                        extension = extension.name(),
+                        threat = ?scan_result.threat_level,
+                        explanation = %scan_result.explanation,
+                        "Extension installation would be blocked due to security threat, but continuing for testing"
+                    );
+                    // TODO: In production, this would block installation
+                    // return Err(ExtensionError::SetupError(format!(
+                    //     "Extension installation blocked due to security threat: {}",
+                    //     scan_result.explanation
+                    // )));
+                }
+
+                if security_manager.should_ask_user(&scan_result) {
+                    tracing::info!(
+                        extension = extension.name(),
+                        threat = ?scan_result.threat_level,
+                        explanation = %scan_result.explanation,
+                        "Extension installation requires user confirmation due to potential security risk"
+                    );
+                    // For extension installation, we could implement a confirmation flow here
+                    // For now, we'll log and continue, but this could be enhanced to wait for user confirmation
+                }
+            }
+        }
+        drop(security_manager);
+
         match &extension {
             ExtensionConfig::Frontend {
                 name: _,
@@ -550,7 +677,102 @@ impl Agent {
 
         Ok(Box::pin(async_stream::try_stream! {
             let _ = reply_span.enter();
+            
+            // Scan and score initial user messages for background monitoring
+            for message in &messages {
+                if let Some((score, explanation)) = self.scan_and_score_message(message).await {
+                    tracing::info!(
+                        message_type = "initial_context",
+                        role = ?message.role,
+                        score = score,
+                        explanation = %explanation,
+                        "Scanned initial context message"
+                    );
+                }
+            }
+            
             loop {
+                // Security scanning of user input before sending to LLM
+                let security_manager = self.security_manager.lock().await;
+                if let Some(ref security_manager) = *security_manager {
+                    // Extract user input content for scanning (only scan the latest user message)
+                    if let Some(last_user_message) = messages.iter().rev().find(|msg| msg.role == mcp_core::role::Role::User) {
+                        let user_input_content: Vec<mcp_core::Content> = last_user_message.content
+                            .iter()
+                            .filter_map(|msg_content| {
+                                if let Some(text) = msg_content.as_text() {
+                                    Some(mcp_core::Content::text(text))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+
+                        if !user_input_content.is_empty() {
+                            if let Ok(Some(scan_result)) = security_manager.scan_content(&user_input_content).await {
+                                if security_manager.should_ask_user(&scan_result) {
+                                    // Generate a unique ID for this security confirmation
+                                    let security_id = format!("security_{}", uuid::Uuid::new_v4());
+
+                                    // Create security confirmation request message
+                                    let security_confirmation_msg = Message::user()
+                                        .with_security_confirmation_request(
+                                            security_id.clone(),
+                                            format!("{:?}", scan_result.threat_level),
+                                            scan_result.explanation.clone(),
+                                            user_input_content.iter()
+                                                .filter_map(|c| c.as_text().map(String::from))
+                                                .collect::<Vec<_>>()
+                                                .join("\n"),
+                                            Some("Your input contains potentially risky content. Would you like to proceed?".to_string()),
+                                        );
+
+                                    // Yield the security confirmation request
+                                    yield AgentEvent::Message(security_confirmation_msg);
+
+                                    // Wait for user confirmation
+                                    let mut security_rx = self.security_confirmation_rx.lock().await;
+                                    if let Some((confirmed_id, confirmation)) = security_rx.recv().await {
+                                        if confirmed_id == security_id {
+                                            match confirmation.permission {
+                                                crate::permission::SecurityPermission::AllowOnce => {
+                                                    // User allowed, continue with request
+                                                    tracing::info!("User allowed potentially risky input");
+                                                }
+                                                crate::permission::SecurityPermission::DenyOnce => {
+                                                    // User denied, but don't block - just log for now
+                                                    tracing::warn!("User denied potentially risky input, but continuing processing for testing");
+                                                    // TODO: In production, this would block the request
+                                                }
+                                                crate::permission::SecurityPermission::AlwaysAllow => {
+                                                    // User chose to always allow this type of threat
+                                                    tracing::info!("User chose to always allow this threat level");
+                                                    // TODO: Store this preference for future use
+                                                }
+                                                crate::permission::SecurityPermission::NeverAllow => {
+                                                    // User chose to never allow this type of threat
+                                                    tracing::warn!("User chose to never allow this threat level, but continuing processing for testing");
+                                                    // TODO: In production, this would block the request and store preference
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if security_manager.should_block(&scan_result) {
+                                    // Automatically block without user confirmation - but just log for now
+                                    tracing::warn!(
+                                        threat = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "Would automatically block risky input, but continuing for testing"
+                                    );
+                                    // TODO: In production, this would block the request
+                                    // break; // Exit the loop to stop processing
+                                }
+                            }
+                        }
+                    }
+                }
+                drop(security_manager); // Release the lock
+
                 match Self::generate_response_from_provider(
                     self.provider().await?,
                     &system_prompt,
@@ -729,6 +951,25 @@ impl Agent {
 
                         let final_message_tool_resp = message_tool_response.lock().await.clone();
                         yield AgentEvent::Message(final_message_tool_resp.clone());
+
+                        // Scan and score ALL messages that will be added to context
+                        if let Some((score, explanation)) = self.scan_and_score_message(&response).await {
+                            tracing::info!(
+                                message_type = "assistant_response",
+                                score = score,
+                                explanation = %explanation,
+                                "Scanned assistant response message"
+                            );
+                        }
+                        
+                        if let Some((score, explanation)) = self.scan_and_score_message(&final_message_tool_resp).await {
+                            tracing::info!(
+                                message_type = "tool_response",
+                                score = score,
+                                explanation = %explanation,
+                                "Scanned tool response message"
+                            );
+                        }
 
                         messages.push(response);
                         messages.push(final_message_tool_resp);

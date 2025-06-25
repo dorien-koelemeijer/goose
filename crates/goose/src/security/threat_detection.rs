@@ -524,8 +524,10 @@ if __name__ == "__main__":
         };
 
         let final_explanation = if confidence < self.confidence_threshold {
-            format!("{} (confidence {:.3} below threshold {:.3}, treating as safe)", 
-                    explanation, confidence, self.confidence_threshold)
+            format!(
+                "{} (confidence {:.3} below threshold {:.3}, treating as safe)",
+                explanation, confidence, self.confidence_threshold
+            )
         } else {
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
@@ -792,8 +794,10 @@ if __name__ == "__main__":
         };
 
         let final_explanation = if confidence < self.confidence_threshold {
-            format!("{} (confidence {:.3} below threshold {:.3}, treating as safe)", 
-                    explanation, confidence, self.confidence_threshold)
+            format!(
+                "{} (confidence {:.3} below threshold {:.3}, treating as safe)",
+                explanation, confidence, self.confidence_threshold
+            )
         } else {
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
@@ -843,7 +847,6 @@ impl ContentScanner for LlamaPromptGuardScanner {
     }
 }
 
-
 // New scanner implementations
 
 pub struct DeepsetDebertaScanner {
@@ -857,10 +860,7 @@ impl DeepsetDebertaScanner {
         Self {
             model_name: "deepset/deberta-v3-base-injection".to_string(),
             python_script_path: Self::create_python_script().unwrap_or_else(|e| {
-                tracing::error!(
-                    "Failed to create Python script for Deepset DeBERTa: {}",
-                    e
-                );
+                tracing::error!("Failed to create Python script for Deepset DeBERTa: {}", e);
                 "deepset_deberta_scanner.py".to_string()
             }),
             confidence_threshold,
@@ -995,14 +995,25 @@ if __name__ == "__main__":
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let analysis: Value = serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
+        let analysis: Value =
+            serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
         self.parse_analysis_result(analysis)
     }
 
     fn parse_analysis_result(&self, analysis: Value) -> Result<ScanResult> {
-        let threat_level_str = analysis.get("threat_level").and_then(|v| v.as_str()).unwrap_or("Medium");
-        let confidence = analysis.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-        let explanation = analysis.get("explanation").and_then(|v| v.as_str()).unwrap_or("No explanation provided").to_string();
+        let threat_level_str = analysis
+            .get("threat_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Medium");
+        let confidence = analysis
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let explanation = analysis
+            .get("explanation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No explanation provided")
+            .to_string();
 
         let threat_level = if confidence < self.confidence_threshold {
             ThreatLevel::Safe
@@ -1018,7 +1029,10 @@ if __name__ == "__main__":
         };
 
         let final_explanation = if confidence < self.confidence_threshold {
-            format!("{} (confidence {:.3} below threshold {:.3}, treating as safe)", explanation, confidence, self.confidence_threshold)
+            format!(
+                "{} (confidence {:.3} below threshold {:.3}, treating as safe)",
+                explanation, confidence, self.confidence_threshold
+            )
         } else {
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
@@ -1034,13 +1048,31 @@ if __name__ == "__main__":
 #[async_trait]
 impl ContentScanner for DeepsetDebertaScanner {
     async fn scan_content(&self, content: &[Content]) -> Result<ScanResult> {
-        let combined_content = content.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
+        let combined_content = content
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         self.analyze_with_python(&combined_content).await
     }
 
-    async fn scan_tool_result(&self, tool_name: &str, arguments: &Value, result: &[Content]) -> Result<ScanResult> {
-        let combined_content = result.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
-        let contextual_content = format!("Tool: {}\nArguments: {}\nResult: {}", tool_name, serde_json::to_string(arguments).unwrap_or_default(), combined_content);
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
+        let combined_content = result
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
         self.analyze_with_python(&contextual_content).await
     }
 }
@@ -1191,14 +1223,25 @@ if __name__ == "__main__":
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let analysis: Value = serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
+        let analysis: Value =
+            serde_json::from_str(&stdout).context("Failed to parse Python script output")?;
         self.parse_analysis_result(analysis)
     }
 
     fn parse_analysis_result(&self, analysis: Value) -> Result<ScanResult> {
-        let threat_level_str = analysis.get("threat_level").and_then(|v| v.as_str()).unwrap_or("Medium");
-        let confidence = analysis.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-        let explanation = analysis.get("explanation").and_then(|v| v.as_str()).unwrap_or("No explanation provided").to_string();
+        let threat_level_str = analysis
+            .get("threat_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Medium");
+        let confidence = analysis
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let explanation = analysis
+            .get("explanation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No explanation provided")
+            .to_string();
 
         let threat_level = if confidence < self.confidence_threshold {
             ThreatLevel::Safe
@@ -1214,7 +1257,10 @@ if __name__ == "__main__":
         };
 
         let final_explanation = if confidence < self.confidence_threshold {
-            format!("{} (confidence {:.3} below threshold {:.3}, treating as safe)", explanation, confidence, self.confidence_threshold)
+            format!(
+                "{} (confidence {:.3} below threshold {:.3}, treating as safe)",
+                explanation, confidence, self.confidence_threshold
+            )
         } else {
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
@@ -1230,13 +1276,31 @@ if __name__ == "__main__":
 #[async_trait]
 impl ContentScanner for ToxicBertScanner {
     async fn scan_content(&self, content: &[Content]) -> Result<ScanResult> {
-        let combined_content = content.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
+        let combined_content = content
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         self.analyze_with_python(&combined_content).await
     }
 
-    async fn scan_tool_result(&self, tool_name: &str, arguments: &Value, result: &[Content]) -> Result<ScanResult> {
-        let combined_content = result.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
-        let contextual_content = format!("Tool: {}\nArguments: {}\nResult: {}", tool_name, serde_json::to_string(arguments).unwrap_or_default(), combined_content);
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
+        let combined_content = result
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
         self.analyze_with_python(&contextual_content).await
     }
 }
@@ -1252,7 +1316,7 @@ impl OpenAiModerationScanner {
             tracing::warn!("OPENAI_API_KEY not set, OpenAI Moderation scanner will not work");
             String::new()
         });
-        
+
         Self {
             api_key,
             confidence_threshold,
@@ -1289,8 +1353,11 @@ impl OpenAiModerationScanner {
 
     fn parse_moderation_result(&self, analysis: Value) -> Result<ScanResult> {
         let empty_vec = vec![];
-        let results = analysis.get("results").and_then(|r| r.as_array()).unwrap_or(&empty_vec);
-        
+        let results = analysis
+            .get("results")
+            .and_then(|r| r.as_array())
+            .unwrap_or(&empty_vec);
+
         if results.is_empty() {
             return Ok(ScanResult {
                 threat_level: ThreatLevel::Medium,
@@ -1300,8 +1367,11 @@ impl OpenAiModerationScanner {
         }
 
         let result = &results[0];
-        let flagged = result.get("flagged").and_then(|f| f.as_bool()).unwrap_or(false);
-        
+        let flagged = result
+            .get("flagged")
+            .and_then(|f| f.as_bool())
+            .unwrap_or(false);
+
         if !flagged {
             return Ok(ScanResult {
                 threat_level: ThreatLevel::Safe,
@@ -1313,7 +1383,8 @@ impl OpenAiModerationScanner {
         // Check category scores to determine threat level
         let empty_obj = serde_json::json!({});
         let categories = result.get("category_scores").unwrap_or(&empty_obj);
-        let max_score = categories.as_object()
+        let max_score = categories
+            .as_object()
             .map(|obj| obj.values().filter_map(|v| v.as_f64()).fold(0.0, f64::max))
             .unwrap_or(0.0) as f32;
 
@@ -1328,9 +1399,15 @@ impl OpenAiModerationScanner {
         };
 
         let explanation = if max_score < self.confidence_threshold {
-            format!("Content flagged by OpenAI but score {:.3} below threshold {:.3}, treating as safe", max_score, self.confidence_threshold)
+            format!(
+                "Content flagged by OpenAI but score {:.3} below threshold {:.3}, treating as safe",
+                max_score, self.confidence_threshold
+            )
         } else {
-            format!("Content flagged by OpenAI moderation (max score: {:.3})", max_score)
+            format!(
+                "Content flagged by OpenAI moderation (max score: {:.3})",
+                max_score
+            )
         };
 
         Ok(ScanResult {
@@ -1344,13 +1421,31 @@ impl OpenAiModerationScanner {
 #[async_trait]
 impl ContentScanner for OpenAiModerationScanner {
     async fn scan_content(&self, content: &[Content]) -> Result<ScanResult> {
-        let combined_content = content.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
+        let combined_content = content
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         self.analyze_with_api(&combined_content).await
     }
 
-    async fn scan_tool_result(&self, tool_name: &str, arguments: &Value, result: &[Content]) -> Result<ScanResult> {
-        let combined_content = result.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
-        let contextual_content = format!("Tool: {}\nArguments: {}\nResult: {}", tool_name, serde_json::to_string(arguments).unwrap_or_default(), combined_content);
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
+        let combined_content = result
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
         self.analyze_with_api(&contextual_content).await
     }
 }
@@ -1364,62 +1459,75 @@ pub struct ParallelEnsembleScanner {
 impl ParallelEnsembleScanner {
     pub fn new(ensemble_config: EnsembleConfig) -> Result<Self> {
         let mut members = Vec::new();
-        
+
         for member_config in ensemble_config.member_configs {
             let scanner: Box<dyn ContentScanner> = match member_config.scanner_type {
-                ScannerType::DeepsetDeberta => {
-                    Box::new(DeepsetDebertaScanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::RustDeepsetDeberta => {
-                    Box::new(crate::security::rust_scanners::OnnxDeepsetDebertaScanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::RustProtectAiDeberta => {
-                    Box::new(crate::security::rust_scanners::OnnxProtectAiDebertaScanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::RustLlamaPromptGuard2 => {
-                    Box::new(crate::security::rust_scanners::OnnxLlamaPromptGuard2Scanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::ProtectAiDeberta => {
-                    Box::new(LlamaPromptGuardScanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::LlamaPromptGuard2 => {
-                    Box::new(LlamaPromptGuard2Scanner::new(member_config.confidence_threshold))
-                },
+                ScannerType::DeepsetDeberta => Box::new(DeepsetDebertaScanner::new(
+                    member_config.confidence_threshold,
+                )),
+                ScannerType::RustDeepsetDeberta => Box::new(
+                    crate::security::rust_scanners::OnnxDeepsetDebertaScanner::new(
+                        member_config.confidence_threshold,
+                    ),
+                ),
+                ScannerType::RustProtectAiDeberta => Box::new(
+                    crate::security::rust_scanners::OnnxProtectAiDebertaScanner::new(
+                        member_config.confidence_threshold,
+                    ),
+                ),
+                ScannerType::RustLlamaPromptGuard2 => Box::new(
+                    crate::security::rust_scanners::OnnxLlamaPromptGuard2Scanner::new(
+                        member_config.confidence_threshold,
+                    ),
+                ),
+                ScannerType::ProtectAiDeberta => Box::new(LlamaPromptGuardScanner::new(
+                    member_config.confidence_threshold,
+                )),
+                ScannerType::LlamaPromptGuard2 => Box::new(LlamaPromptGuard2Scanner::new(
+                    member_config.confidence_threshold,
+                )),
                 ScannerType::ToxicBert => {
                     Box::new(ToxicBertScanner::new(member_config.confidence_threshold))
-                },
-                ScannerType::OpenAiModeration => {
-                    Box::new(OpenAiModerationScanner::new(member_config.confidence_threshold))
-                },
-                _ => return Err(anyhow::anyhow!("Scanner type {:?} not supported in ensemble", member_config.scanner_type)),
+                }
+                ScannerType::OpenAiModeration => Box::new(OpenAiModerationScanner::new(
+                    member_config.confidence_threshold,
+                )),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Scanner type {:?} not supported in ensemble",
+                        member_config.scanner_type
+                    ))
+                }
             };
-            
+
             members.push((scanner, member_config));
         }
-        
+
         Ok(Self {
             members,
             voting_strategy: ensemble_config.voting_strategy,
         })
     }
-    
+
     async fn scan_with_ensemble(&self, content: &[Content]) -> Result<ScanResult> {
         // Run all scanners in parallel
-        let scan_futures: Vec<_> = self.members.iter().map(|(scanner, _)| {
-            scanner.scan_content(content)
-        }).collect();
-        
+        let scan_futures: Vec<_> = self
+            .members
+            .iter()
+            .map(|(scanner, _)| scanner.scan_content(content))
+            .collect();
+
         // Wait for all scans to complete
         let scan_results: Vec<Result<ScanResult>> = futures::future::join_all(scan_futures).await;
-        
+
         // Process results and apply voting strategy
         self.combine_results(scan_results)
     }
-    
+
     fn combine_results(&self, results: Vec<Result<ScanResult>>) -> Result<ScanResult> {
         let mut successful_results = Vec::new();
         let mut explanations = Vec::new();
-        
+
         // Collect successful results
         for (i, result) in results.into_iter().enumerate() {
             match result {
@@ -1427,14 +1535,14 @@ impl ParallelEnsembleScanner {
                     let member_name = format!("{:?}", self.members[i].1.scanner_type);
                     explanations.push(format!("{}: {}", member_name, scan_result.explanation));
                     successful_results.push((scan_result, &self.members[i].1));
-                },
+                }
                 Err(e) => {
                     let member_name = format!("{:?}", self.members[i].1.scanner_type);
                     explanations.push(format!("{}: Error - {}", member_name, e));
                 }
             }
         }
-        
+
         if successful_results.is_empty() {
             return Ok(ScanResult {
                 threat_level: ThreatLevel::Medium,
@@ -1442,118 +1550,131 @@ impl ParallelEnsembleScanner {
                 sanitized_content: None,
             });
         }
-        
+
         // Apply voting strategy
         let (final_threat_level, voting_explanation) = match self.voting_strategy {
             VotingStrategy::AnyDetection => self.any_detection_vote(&successful_results),
             VotingStrategy::MajorityVote => self.majority_vote(&successful_results),
             VotingStrategy::WeightedVote => self.weighted_vote(&successful_results),
         };
-        
+
         let combined_explanation = format!(
             "Ensemble result ({}): {} | Member results: [{}]",
             voting_explanation,
             match final_threat_level {
                 ThreatLevel::Safe => "SAFE",
                 ThreatLevel::Low => "LOW THREAT",
-                ThreatLevel::Medium => "MEDIUM THREAT", 
+                ThreatLevel::Medium => "MEDIUM THREAT",
                 ThreatLevel::High => "HIGH THREAT",
                 ThreatLevel::Critical => "CRITICAL THREAT",
             },
             explanations.join(" | ")
         );
-        
+
         Ok(ScanResult {
             threat_level: final_threat_level,
             explanation: combined_explanation,
             sanitized_content: None, // Ensemble doesn't provide sanitization
         })
     }
-    
-    fn any_detection_vote(&self, results: &[(ScanResult, &EnsembleMember)]) -> (ThreatLevel, String) {
+
+    fn any_detection_vote(
+        &self,
+        results: &[(ScanResult, &EnsembleMember)],
+    ) -> (ThreatLevel, String) {
         let mut max_threat = ThreatLevel::Safe;
         let mut detections = 0;
-        
+
         for (result, _) in results {
             if result.threat_level != ThreatLevel::Safe {
                 detections += 1;
-                if self.threat_level_priority(&result.threat_level) > self.threat_level_priority(&max_threat) {
+                if self.threat_level_priority(&result.threat_level)
+                    > self.threat_level_priority(&max_threat)
+                {
                     max_threat = result.threat_level.clone();
                 }
             }
         }
-        
+
         let explanation = if detections > 0 {
             format!("{}/{} models detected threats", detections, results.len())
         } else {
             format!("0/{} models detected threats", results.len())
         };
-        
+
         (max_threat, explanation)
     }
-    
+
     fn majority_vote(&self, results: &[(ScanResult, &EnsembleMember)]) -> (ThreatLevel, String) {
         let total_members = results.len();
         let majority_threshold = (total_members / 2) + 1;
-        
+
         let mut threat_detections = 0;
         let mut max_threat = ThreatLevel::Safe;
-        
+
         for (result, _) in results {
             if result.threat_level != ThreatLevel::Safe {
                 threat_detections += 1;
-                if self.threat_level_priority(&result.threat_level) > self.threat_level_priority(&max_threat) {
+                if self.threat_level_priority(&result.threat_level)
+                    > self.threat_level_priority(&max_threat)
+                {
                     max_threat = result.threat_level.clone();
                 }
             }
         }
-        
+
         let final_threat = if threat_detections >= majority_threshold {
             max_threat
         } else {
             ThreatLevel::Safe
         };
-        
+
         let explanation = format!(
             "{}/{} models detected threats (majority: {})",
             threat_detections, total_members, majority_threshold
         );
-        
+
         (final_threat, explanation)
     }
-    
+
     fn weighted_vote(&self, results: &[(ScanResult, &EnsembleMember)]) -> (ThreatLevel, String) {
         let mut total_weight = 0.0;
         let mut threat_weight = 0.0;
         let mut max_threat = ThreatLevel::Safe;
-        
+
         for (result, member) in results {
             total_weight += member.weight;
-            
+
             if result.threat_level != ThreatLevel::Safe {
                 threat_weight += member.weight;
-                if self.threat_level_priority(&result.threat_level) > self.threat_level_priority(&max_threat) {
+                if self.threat_level_priority(&result.threat_level)
+                    > self.threat_level_priority(&max_threat)
+                {
                     max_threat = result.threat_level.clone();
                 }
             }
         }
-        
-        let threat_ratio = if total_weight > 0.0 { threat_weight / total_weight } else { 0.0 };
-        
+
+        let threat_ratio = if total_weight > 0.0 {
+            threat_weight / total_weight
+        } else {
+            0.0
+        };
+
         let final_threat = if threat_ratio >= 0.5 {
             max_threat
         } else {
             ThreatLevel::Safe
         };
-        
+
         let explanation = format!(
             "Weighted vote: {:.1}% threat confidence",
             threat_ratio * 100.0
         );
-        
+
         (final_threat, explanation)
     }
-    
+
     fn threat_level_priority(&self, threat_level: &ThreatLevel) -> u8 {
         match threat_level {
             ThreatLevel::Safe => 0,
@@ -1571,10 +1692,24 @@ impl ContentScanner for ParallelEnsembleScanner {
         self.scan_with_ensemble(content).await
     }
 
-    async fn scan_tool_result(&self, tool_name: &str, arguments: &Value, result: &[Content]) -> Result<ScanResult> {
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
         // For tool results, we analyze the content with some context
-        let combined_content = result.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("\n");
-        let contextual_content = format!("Tool: {}\nArguments: {}\nResult: {}", tool_name, serde_json::to_string(arguments).unwrap_or_default(), combined_content);
+        let combined_content = result
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
         let content_with_context = vec![Content::text(contextual_content)];
         self.scan_with_ensemble(&content_with_context).await
     }

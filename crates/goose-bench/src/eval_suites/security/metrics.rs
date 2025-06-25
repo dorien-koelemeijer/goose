@@ -17,12 +17,7 @@ impl EvaluationMetrics {
         Self::default()
     }
 
-    pub fn record_result(
-        &mut self,
-        detected_threat: bool,
-        expected_threat: bool,
-        scan_time: f64,
-    ) {
+    pub fn record_result(&mut self, detected_threat: bool, expected_threat: bool, scan_time: f64) {
         self.total_scan_time += scan_time;
         self.total_cases += 1;
 

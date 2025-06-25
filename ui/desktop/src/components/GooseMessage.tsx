@@ -13,9 +13,11 @@ import {
   getToolRequests,
   getToolResponses,
   getToolConfirmationContent,
+  getSecurityConfirmationContent,
   createToolErrorResponseMessage,
 } from '../types/message';
 import ToolCallConfirmation from './ToolCallConfirmation';
+import SecurityConfirmation from './SecurityConfirmation';
 import MessageCopyLink from './MessageCopyLink';
 import { NotificationEvent } from '../hooks/useMessageStream';
 
@@ -69,6 +71,9 @@ export default function GooseMessage({
 
   const toolConfirmationContent = getToolConfirmationContent(message);
   const hasToolConfirmation = toolConfirmationContent !== undefined;
+
+  const securityConfirmationContent = getSecurityConfirmationContent(message);
+  const hasSecurityConfirmation = securityConfirmationContent !== undefined;
 
   // Find tool responses that correspond to the tool requests in this message
   const toolResponsesMap = useMemo(() => {
@@ -177,6 +182,18 @@ export default function GooseMessage({
             isClicked={messageIndex < messageHistoryIndex - 1}
             toolConfirmationId={toolConfirmationContent.id}
             toolName={toolConfirmationContent.toolName}
+          />
+        )}
+
+        {hasSecurityConfirmation && (
+          <SecurityConfirmation
+            isCancelledMessage={messageIndex == messageHistoryIndex - 1}
+            isClicked={messageIndex < messageHistoryIndex - 1}
+            securityConfirmationId={securityConfirmationContent.id}
+            threatLevel={securityConfirmationContent.threatLevel}
+            explanation={securityConfirmationContent.explanation}
+            originalContent={securityConfirmationContent.originalContent}
+            prompt={securityConfirmationContent.prompt}
           />
         )}
       </div>

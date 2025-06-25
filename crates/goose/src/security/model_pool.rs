@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use anyhow::{Context, Result};
 use tokio::time::sleep;
 
 /// Manages long-running Python processes for model inference
@@ -21,7 +21,7 @@ impl PythonModelPool {
         let pool = Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
         };
-        
+
         // Start cleanup task
         pool.start_cleanup_task();
         pool
@@ -37,7 +37,7 @@ impl PythonModelPool {
         // Current implementation - spawn process per request
         // This is what we have now, but could be optimized
         let script_path = self.get_script_path(model_name)?;
-        
+
         let output = Command::new("python3")
             .arg(&script_path)
             .arg("--text")
@@ -69,18 +69,18 @@ impl PythonModelPool {
         tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await; // Check every minute
-                
+
                 let mut processes = processes.lock().unwrap();
                 let now = Instant::now();
                 let timeout = Duration::from_secs(300); // 5 minutes
-                
+
                 // Find expired processes
                 let expired: Vec<String> = processes
                     .iter()
                     .filter(|(_, info)| now.duration_since(info.last_used) > timeout)
                     .map(|(key, _)| key.clone())
                     .collect();
-                
+
                 // Kill expired processes
                 for key in expired {
                     if let Some(mut info) = processes.remove(&key) {
@@ -103,7 +103,7 @@ impl PythonModelPool {
         // 3. Send JSON request via stdin
         // 4. Read JSON response from stdout
         // 5. Update last_used timestamp
-        
+
         todo!("Implement persistent process communication")
     }
 }

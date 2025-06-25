@@ -13,8 +13,8 @@ pub enum Permission {
 pub enum SecurityPermission {
     AllowOnce,
     DenyOnce,
-    AlwaysAllow,  // For this type of threat
-    NeverAllow,   // For this type of threat
+    AlwaysAllow, // For this type of threat
+    NeverAllow,  // For this type of threat
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]

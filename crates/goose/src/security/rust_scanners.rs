@@ -23,38 +23,44 @@ impl OnnxDeepsetDebertaScanner {
     }
 
     async fn load_model_cached() -> Result<(Arc<Session>, Arc<Tokenizer>)> {
-        MODEL_CACHE.get_or_try_init(|| async {
-            tracing::info!("Loading ONNX DeBERTa model from disk...");
-            
-            // Create ONNX environment
-            let environment = Arc::new(Environment::builder().build()?);
-            
-            // Load the ONNX model (find project root reliably)
-            let project_root = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .ancestors()
-                .find(|path| path.join("onnx_models").exists())
-                .unwrap_or_else(|| std::path::Path::new("/Users/dkoelemeijer/Development/goose"))
-                .to_path_buf();
-            
-            let model_path = project_root.join("onnx_models/deepset_deberta-v3-base-injection.onnx");
-            
-            tracing::info!("Loading ONNX model from: {:?}", model_path);
-            
-            let session = SessionBuilder::new(&environment)?
-                .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-                .with_intra_threads(1)?
-                .with_model_from_file(&model_path)?;
-            
-            // Load tokenizer
-            let tokenizer_path = project_root.join("onnx_models/tokenizer.json");
-            let tokenizer = Tokenizer::from_file(tokenizer_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
-            
-            tracing::info!("Successfully loaded ONNX DeBERTa model and tokenizer");
-            
-            Ok((Arc::new(session), Arc::new(tokenizer)))
-        }).await.cloned()
+        MODEL_CACHE
+            .get_or_try_init(|| async {
+                tracing::info!("Loading ONNX DeBERTa model from disk...");
+
+                // Create ONNX environment
+                let environment = Arc::new(Environment::builder().build()?);
+
+                // Load the ONNX model (find project root reliably)
+                let project_root = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .ancestors()
+                    .find(|path| path.join("onnx_models").exists())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new("/Users/dkoelemeijer/Development/goose")
+                    })
+                    .to_path_buf();
+
+                let model_path =
+                    project_root.join("onnx_models/deepset_deberta-v3-base-injection.onnx");
+
+                tracing::info!("Loading ONNX model from: {:?}", model_path);
+
+                let session = SessionBuilder::new(&environment)?
+                    .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
+                    .with_intra_threads(1)?
+                    .with_model_from_file(&model_path)?;
+
+                // Load tokenizer
+                let tokenizer_path = project_root.join("onnx_models/tokenizer.json");
+                let tokenizer = Tokenizer::from_file(tokenizer_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+
+                tracing::info!("Successfully loaded ONNX DeBERTa model and tokenizer");
+
+                Ok((Arc::new(session), Arc::new(tokenizer)))
+            })
+            .await
+            .cloned()
     }
 
     async fn analyze_text(&self, text: &str) -> Result<ScanResult> {
@@ -94,10 +100,7 @@ impl OnnxDeepsetDebertaScanner {
         let outputs = session.run(inputs)?;
 
         // Extract logits from output
-        let logits = outputs[0]
-            .try_extract::<f32>()?
-            .view()
-            .to_owned();
+        let logits = outputs[0].try_extract::<f32>()?.view().to_owned();
 
         // Apply softmax to get probabilities
         let logits_slice = logits.as_slice().unwrap();
@@ -198,38 +201,44 @@ impl OnnxProtectAiDebertaScanner {
     }
 
     async fn load_model_cached() -> Result<(Arc<Session>, Arc<Tokenizer>)> {
-        PROTECTAI_MODEL_CACHE.get_or_try_init(|| async {
-            tracing::info!("Loading ONNX ProtectAI DeBERTa model from disk...");
+        PROTECTAI_MODEL_CACHE
+            .get_or_try_init(|| async {
+                tracing::info!("Loading ONNX ProtectAI DeBERTa model from disk...");
 
-            // Create ONNX environment
-            let environment = Arc::new(Environment::builder().build()?);
+                // Create ONNX environment
+                let environment = Arc::new(Environment::builder().build()?);
 
-            // Load the ONNX model (find project root reliably)
-            let project_root = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .ancestors()
-                .find(|path| path.join("onnx_models").exists())
-                .unwrap_or_else(|| std::path::Path::new("/Users/dkoelemeijer/Development/goose"))
-                .to_path_buf();
+                // Load the ONNX model (find project root reliably)
+                let project_root = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .ancestors()
+                    .find(|path| path.join("onnx_models").exists())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new("/Users/dkoelemeijer/Development/goose")
+                    })
+                    .to_path_buf();
 
-            let model_path = project_root.join("onnx_models/protectai_deberta-v3-base-prompt-injection-v2.onnx");
+                let model_path = project_root
+                    .join("onnx_models/protectai_deberta-v3-base-prompt-injection-v2.onnx");
 
-            tracing::info!("Loading ONNX ProtectAI model from: {:?}", model_path);
+                tracing::info!("Loading ONNX ProtectAI model from: {:?}", model_path);
 
-            let session = SessionBuilder::new(&environment)?
-                .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-                .with_intra_threads(1)?
-                .with_model_from_file(&model_path)?;
+                let session = SessionBuilder::new(&environment)?
+                    .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
+                    .with_intra_threads(1)?
+                    .with_model_from_file(&model_path)?;
 
-            // Load tokenizer (same tokenizer for both models)
-            let tokenizer_path = project_root.join("onnx_models/tokenizer.json");
-            let tokenizer = Tokenizer::from_file(tokenizer_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+                // Load tokenizer (same tokenizer for both models)
+                let tokenizer_path = project_root.join("onnx_models/tokenizer.json");
+                let tokenizer = Tokenizer::from_file(tokenizer_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-            tracing::info!("Successfully loaded ONNX ProtectAI DeBERTa model and tokenizer");
+                tracing::info!("Successfully loaded ONNX ProtectAI DeBERTa model and tokenizer");
 
-            Ok((Arc::new(session), Arc::new(tokenizer)))
-        }).await.cloned()
+                Ok((Arc::new(session), Arc::new(tokenizer)))
+            })
+            .await
+            .cloned()
     }
 
     async fn analyze_text(&self, text: &str) -> Result<ScanResult> {
@@ -269,10 +278,7 @@ impl OnnxProtectAiDebertaScanner {
         let outputs = session.run(inputs)?;
 
         // Extract logits from output
-        let logits = outputs[0]
-            .try_extract::<f32>()?
-            .view()
-            .to_owned();
+        let logits = outputs[0].try_extract::<f32>()?.view().to_owned();
 
         // Apply softmax to get probabilities
         let logits_slice = logits.as_slice().unwrap();
@@ -373,38 +379,46 @@ impl OnnxLlamaPromptGuard2Scanner {
     }
 
     async fn load_model_cached() -> Result<(Arc<Session>, Arc<Tokenizer>)> {
-        LLAMA_GUARD2_MODEL_CACHE.get_or_try_init(|| async {
-            tracing::info!("Loading ONNX Llama Prompt Guard 2 model from disk...");
+        LLAMA_GUARD2_MODEL_CACHE
+            .get_or_try_init(|| async {
+                tracing::info!("Loading ONNX Llama Prompt Guard 2 model from disk...");
 
-            // Create ONNX environment
-            let environment = Arc::new(Environment::builder().build()?);
+                // Create ONNX environment
+                let environment = Arc::new(Environment::builder().build()?);
 
-            // Load the ONNX model (find project root reliably)
-            let project_root = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .ancestors()
-                .find(|path| path.join("onnx_models").exists())
-                .unwrap_or_else(|| std::path::Path::new("/Users/dkoelemeijer/Development/goose"))
-                .to_path_buf();
+                // Load the ONNX model (find project root reliably)
+                let project_root = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .ancestors()
+                    .find(|path| path.join("onnx_models").exists())
+                    .unwrap_or_else(|| {
+                        std::path::Path::new("/Users/dkoelemeijer/Development/goose")
+                    })
+                    .to_path_buf();
 
-            let model_path = project_root.join("onnx_models/meta-llama_Llama-Prompt-Guard-2-86M.onnx");
+                let model_path =
+                    project_root.join("onnx_models/meta-llama_Llama-Prompt-Guard-2-86M.onnx");
 
-            tracing::info!("Loading ONNX Llama Guard 2 model from: {:?}", model_path);
+                tracing::info!("Loading ONNX Llama Guard 2 model from: {:?}", model_path);
 
-            let session = SessionBuilder::new(&environment)?
-                .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-                .with_intra_threads(1)?
-                .with_model_from_file(&model_path)?;
+                let session = SessionBuilder::new(&environment)?
+                    .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
+                    .with_intra_threads(1)?
+                    .with_model_from_file(&model_path)?;
 
-            // Load tokenizer (Llama Guard 2 has its own tokenizer)
-            let tokenizer_path = project_root.join("onnx_models/meta-llama_Llama-Prompt-Guard-2-86M_tokenizer/tokenizer.json");
-            let tokenizer = Tokenizer::from_file(tokenizer_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+                // Load tokenizer (Llama Guard 2 has its own tokenizer)
+                let tokenizer_path = project_root.join(
+                    "onnx_models/meta-llama_Llama-Prompt-Guard-2-86M_tokenizer/tokenizer.json",
+                );
+                let tokenizer = Tokenizer::from_file(tokenizer_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-            tracing::info!("Successfully loaded ONNX Llama Prompt Guard 2 model and tokenizer");
+                tracing::info!("Successfully loaded ONNX Llama Prompt Guard 2 model and tokenizer");
 
-            Ok((Arc::new(session), Arc::new(tokenizer)))
-        }).await.cloned()
+                Ok((Arc::new(session), Arc::new(tokenizer)))
+            })
+            .await
+            .cloned()
     }
 
     async fn analyze_text(&self, text: &str) -> Result<ScanResult> {
@@ -444,10 +458,7 @@ impl OnnxLlamaPromptGuard2Scanner {
         let outputs = session.run(inputs)?;
 
         // Extract logits from output
-        let logits = outputs[0]
-            .try_extract::<f32>()?
-            .view()
-            .to_owned();
+        let logits = outputs[0].try_extract::<f32>()?.view().to_owned();
 
         // Apply softmax to get probabilities
         let logits_slice = logits.as_slice().unwrap();
@@ -543,13 +554,13 @@ mod tests {
     async fn test_onnx_scanner_basic() {
         // Initialize tracing for the test
         let _ = tracing_subscriber::fmt::try_init();
-        
+
         let scanner = OnnxDeepsetDebertaScanner::new(0.7);
-        
+
         // Test with safe content
         let safe_content = vec![Content::text("Hello, how are you today?")];
         let result = scanner.scan_content(&safe_content).await;
-        
+
         match result {
             Ok(scan_result) => {
                 println!("✅ ONNX Scanner test passed!");

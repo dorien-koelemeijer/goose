@@ -33,6 +33,7 @@ import {
   ToolRequestMessageContent,
   ToolResponseMessageContent,
   ToolConfirmationRequestMessageContent,
+  SecurityConfirmationRequestMessageContent,
   getTextContent,
   TextContent,
 } from '../types/message';
@@ -49,7 +50,7 @@ const isUserMessage = (message: Message): boolean => {
   if (message.role === 'assistant') {
     return false;
   }
-  if (message.content.every((c) => c.type === 'toolConfirmationRequest')) {
+  if (message.content.every((c) => c.type === 'toolConfirmationRequest' || c.type === 'securityConfirmationRequest')) {
     return false;
   }
   return true;
@@ -394,6 +395,11 @@ function ChatContent({
           }
         });
 
+      // Check for security confirmations
+      const hasSecurityConfirmation = lastMessage.content.some(
+        (content) => content.type === 'securityConfirmationRequest'
+      );
+
       if (toolRequests.length !== 0) {
         // This means we were interrupted during a tool request
         // Create tool responses for all interrupted tool requests
@@ -443,9 +449,12 @@ function ChatContent({
       const hasToolConfirmation = message.content.every(
         (c) => c.type === 'toolConfirmationRequest'
       );
+      const hasSecurityConfirmation = message.content.every(
+        (c) => c.type === 'securityConfirmationRequest'
+      );
 
-      // Keep the message if it has text content or tool confirmation or is not just tool responses
-      return hasTextContent || !hasOnlyToolResponses || hasToolConfirmation;
+      // Keep the message if it has text content or tool/security confirmation or is not just tool responses
+      return hasTextContent || !hasOnlyToolResponses || hasToolConfirmation || hasSecurityConfirmation;
     }
 
     return true;
