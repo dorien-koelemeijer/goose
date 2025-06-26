@@ -650,12 +650,60 @@ impl Agent {
                         
                         if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
                             if security_manager.should_ask_user(&scan_result) {
-                                // TODO: Implement security confirmation request to UI
                                 tracing::warn!(
                                     threat_level = ?scan_result.threat_level,
                                     explanation = %scan_result.explanation,
-                                    "Security threat detected in user message, would ask user for confirmation"
+                                    "Security threat detected in user message, requesting user confirmation"
                                 );
+                                
+                                // Generate unique request ID
+                                let request_id = format!("sec_{}", nanoid::nanoid!(8));
+                                let threat_level_str = format!("{:?}", scan_result.threat_level);
+                                
+                                // Create tool confirmation request that looks like a security tool
+                                // This reuses the existing "Allow Tool" UI flow
+                                let security_message = Message::assistant()
+                                    .with_tool_confirmation_request(
+                                        request_id.clone(),
+                                        "security_scanner".to_string(),
+                                        serde_json::json!({
+                                            "threat_level": threat_level_str,
+                                            "explanation": scan_result.explanation,
+                                            "flagged_content": combined_text.clone()
+                                        }),
+                                        Some(format!(
+                                            "🚨 Security Alert: {} threat detected\n\n{}\n\nDo you want to proceed with this message?", 
+                                            threat_level_str, 
+                                            scan_result.explanation
+                                        )),
+                                    );
+                                
+                                // Return the security confirmation request (as tool confirmation)
+                                return Ok(Box::pin(async_stream::try_stream! {
+                                    yield AgentEvent::Message(security_message);
+                                    
+                                    // Wait for user confirmation via the existing tool confirmation system
+                                    let mut confirmation_rx = self.confirmation_rx.lock().await;
+                                    if let Some((received_id, confirmation)) = confirmation_rx.recv().await {
+                                        if received_id == request_id {
+                                            match confirmation.permission {
+                                                crate::permission::Permission::AllowOnce |
+                                                crate::permission::Permission::AlwaysAllow => {
+                                                    tracing::info!("User approved potentially harmful message, proceeding");
+                                                    // Continue with normal processing - we'll need to restart the reply process
+                                                },
+                                                crate::permission::Permission::DenyOnce |
+                                                crate::permission::Permission::Cancel => {
+                                                    tracing::info!("User denied potentially harmful message, blocking");
+                                                    yield AgentEvent::Message(
+                                                        Message::assistant().with_text("Message blocked by user request due to security concerns.")
+                                                    );
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }));
                             } else if security_manager.should_block(&scan_result) {
                                 tracing::error!(
                                     threat_level = ?scan_result.threat_level,

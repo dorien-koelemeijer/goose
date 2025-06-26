@@ -1579,6 +1579,27 @@
           {
             "allOf": [
               {
+                "$ref": "#/components/schemas/SecurityConfirmationRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "securityConfirmationRequest"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
                 "$ref": "#/components/schemas/FrontendToolRequest"
               },
               {
@@ -1932,6 +1953,33 @@
             "nullable": true
           },
           "source": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityConfirmationRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "threatLevel",
+          "explanation",
+          "flaggedContent"
+        ],
+        "properties": {
+          "explanation": {
+            "type": "string"
+          },
+          "flaggedContent": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "nullable": true
+          },
+          "threatLevel": {
             "type": "string"
           }
         }

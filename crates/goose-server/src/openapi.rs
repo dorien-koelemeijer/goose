@@ -5,7 +5,7 @@ use goose::config::permission::PermissionLevel;
 use goose::config::ExtensionEntry;
 use goose::message::{
     ContextLengthExceeded, FrontendToolRequest, Message, MessageContent, RedactedThinkingContent,
-    SummarizationRequested, ThinkingContent, ToolConfirmationRequest, ToolRequest, ToolResponse,
+    SecurityConfirmationRequest, SummarizationRequested, ThinkingContent, ToolConfirmationRequest, ToolRequest, ToolResponse,
 };
 use goose::permission::permission_confirmation::PrincipalType;
 use goose::providers::base::{ConfigKey, ModelInfo, ProviderMetadata};
@@ -75,6 +75,7 @@ use utoipa::OpenApi;
         ToolRequest,
         ToolResultSchema,
         ToolConfirmationRequest,
+        SecurityConfirmationRequest,
         ThinkingContent,
         RedactedThinkingContent,
         FrontendToolRequest,

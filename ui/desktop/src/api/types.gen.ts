@@ -209,6 +209,8 @@ export type MessageContent = (TextContent & {
     type: 'toolResponse';
 }) | (ToolConfirmationRequest & {
     type: 'toolConfirmationRequest';
+}) | (SecurityConfirmationRequest & {
+    type: 'securityConfirmationRequest';
 }) | (FrontendToolRequest & {
     type: 'frontendToolRequest';
 }) | (ThinkingContent & {
@@ -323,6 +325,14 @@ export type ScheduledJob = {
     paused?: boolean;
     process_start_time?: string | null;
     source: string;
+};
+
+export type SecurityConfirmationRequest = {
+    explanation: string;
+    flaggedContent: string;
+    id: string;
+    prompt?: string | null;
+    threatLevel: string;
 };
 
 export type SessionDisplayInfo = {

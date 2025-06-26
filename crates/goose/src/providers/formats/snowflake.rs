@@ -57,6 +57,9 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 MessageContent::ToolConfirmationRequest(_) => {
                     // Skip tool confirmation requests
                 }
+                MessageContent::SecurityConfirmationRequest(_) => {
+                    // Skip security confirmation requests
+                }
                 MessageContent::ContextLengthExceeded(_) => {
                     // Skip
                 }
