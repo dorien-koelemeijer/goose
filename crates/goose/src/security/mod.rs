@@ -242,7 +242,23 @@ impl SecurityManager {
             return Ok(None);
         }
 
-        tracing::info!("Starting security scan of content");
+        // Log the content being scanned for debugging
+        let content_text: Vec<String> = content.iter()
+            .filter_map(|c| c.as_text().map(String::from))
+            .collect();
+        let combined_text = content_text.join("\n");
+        let preview = if combined_text.len() > 200 {
+            format!("{}...", &combined_text[..200])
+        } else {
+            combined_text.clone()
+        };
+        
+        tracing::info!(
+            content_length = combined_text.len(),
+            content_preview = %preview,
+            "Starting security scan of content"
+        );
+        
         let scanner = self.scanner.as_ref().unwrap();
         let scan_result = scanner.scan_content(content).await?;
 

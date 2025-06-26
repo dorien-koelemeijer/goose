@@ -80,6 +80,36 @@ impl Agent {
             tools = vec![];
         }
 
+        // Security scanning: scan system prompt for threats (skip for now due to false positives)
+        // System prompts are generated internally and contain instruction-like language
+        // that triggers false positives in prompt injection detection models
+        if false { // Disabled - system prompts are trusted internal content
+            if let Some(security_manager) = &*self.security_manager.lock().await {
+                let content = vec![mcp_core::Content::text(system_prompt.clone())];
+                
+                tracing::info!("Scanning system prompt for security threats");
+                
+                if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
+                    if security_manager.should_ask_user(&scan_result) {
+                        tracing::warn!(
+                            threat_level = ?scan_result.threat_level,
+                            explanation = %scan_result.explanation,
+                            "Security threat detected in system prompt, would ask user for confirmation"
+                        );
+                        // TODO: Implement security confirmation request to UI for system prompt
+                    } else if security_manager.should_block(&scan_result) {
+                        tracing::error!(
+                            threat_level = ?scan_result.threat_level,
+                            explanation = %scan_result.explanation,
+                            "Security threat detected in system prompt, using safe fallback"
+                        );
+                        // Use a safe fallback system prompt
+                        system_prompt = "You are a helpful AI assistant.".to_string();
+                    }
+                }
+            }
+        }
+
         Ok((tools, toolshim_tools, system_prompt))
     }
 
