@@ -210,7 +210,13 @@ async fn handler(
         };
 
         let mut all_messages = messages.clone();
-        let session_path = session::get_path(session::Identifier::Name(session_id.clone()));
+        let session_path = match session::get_path(session::Identifier::Name(session_id.clone())) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!("Failed to get session path: {:?}", e);
+                return;
+            }
+        };
 
         loop {
             tokio::select! {
@@ -392,7 +398,13 @@ async fn ask_handler(
 
     let session_path = session::get_path(session::Identifier::Name(session_id.clone()));
 
-    let session_path = session_path.clone();
+    let session_path = match session_path {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::error!("Failed to get session path: {:?}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
     let messages = all_messages.clone();
     let provider = Arc::clone(provider.as_ref().unwrap());
     tokio::spawn(async move {

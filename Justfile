@@ -6,11 +6,11 @@ default:
 
 # Default release command
 release-binary:
-    @echo "Building release version with security-onnx features..."
-    cargo build --release -p goose-server --features security-onnx
+    @echo "Building release version with security features..."
+    cargo build --release -p goose-server
     @just copy-binary
     @echo "Generating OpenAPI schema..."
-    cargo run -p goose-server --bin generate_schema --features security-onnx
+    cargo run -p goose-server --bin generate_schema
 
 # Build Windows executable
 release-windows:
@@ -271,8 +271,8 @@ status-temporal:
 
 # Run UI with debug build
 run-dev:
-    @echo "Building development version with security-onnx features..."
-    cargo build -p goose-server --features security-onnx
+    @echo "Building development version with security features..."
+    cargo build -p goose-server
     @just copy-binary debug
     @echo "Running UI..."
     cd ui/desktop && npm run start-gui

@@ -8,7 +8,7 @@ repository.workspace = true
 description.workspace = true
 
 [features]
-default = ["security-basic"]
+default = ["security-basic", "security-onnx"]  # Include both for runtime selection
 security-basic = []  # Basic security scanning without ONNX
 security-onnx = ["ort", "ndarray"]  # Full ONNX model scanning
 
