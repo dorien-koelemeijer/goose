@@ -429,7 +429,7 @@ pub struct PermissionConfirmationRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SecurityConfirmationRequest {
     id: String,
-    permission: String, // "allow_once", "deny_once", "always_allow", "never_allow"
+    permission: String, // "allow_once", "deny_once", "always_allow"
     threat_level: String,
 }
 

@@ -96,7 +96,6 @@ impl Agent {
                             explanation = %scan_result.explanation,
                             "Security threat detected in system prompt, would ask user for confirmation"
                         );
-                        // TODO: Implement security confirmation request to UI for system prompt
                     } else if security_manager.should_block(&scan_result) {
                         tracing::error!(
                             threat_level = ?scan_result.threat_level,
