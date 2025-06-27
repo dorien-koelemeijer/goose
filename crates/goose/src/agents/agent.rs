@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -69,6 +70,8 @@ pub struct Agent {
     pub(super) router_tool_selector: Mutex<Option<Arc<Box<dyn RouterToolSelector>>>>,
     pub(super) scheduler_service: Mutex<Option<Arc<dyn SchedulerTrait>>>,
     pub(super) security_manager: Mutex<Option<SecurityManager>>,
+    pub(super) approved_security_messages: Mutex<std::collections::HashSet<String>>, // Cache of approved message hashes
+    pub(super) denied_security_messages: Mutex<std::collections::HashSet<String>>, // Cache of denied message hashes
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +82,14 @@ pub enum AgentEvent {
 }
 
 impl Agent {
+    /// Create a hash of message content for tracking approved security messages
+    fn hash_message_content(content: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
     /// Check if a message is obviously safe and doesn't need security scanning
     fn is_obviously_safe_message(text: &str) -> bool {
         let text_lower = text.to_lowercase();
@@ -139,6 +150,8 @@ impl Agent {
             router_tool_selector: Mutex::new(None),
             scheduler_service: Mutex::new(None),
             security_manager: Mutex::new(None),
+            approved_security_messages: Mutex::new(std::collections::HashSet::new()),
+            denied_security_messages: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -658,6 +671,15 @@ impl Agent {
         }
     }
 
+    /// Clear the security message caches (for testing or reset purposes)
+    pub async fn clear_security_caches(&self) {
+        let mut approved = self.approved_security_messages.lock().await;
+        let mut denied = self.denied_security_messages.lock().await;
+        approved.clear();
+        denied.clear();
+        tracing::info!("Cleared security message caches");
+    }
+
     #[instrument(skip(self, messages, session), fields(user_message))]
     pub async fn reply(
         &self,
@@ -686,6 +708,38 @@ impl Agent {
                 
                 if !text_contents.is_empty() {
                     let combined_text = text_contents.join("\n");
+                    
+                    // Check if this message was previously approved or denied
+                    let message_hash = Self::hash_message_content(&combined_text);
+                    let approved_messages = self.approved_security_messages.lock().await;
+                    let denied_messages = self.denied_security_messages.lock().await;
+                    
+                    if approved_messages.contains(&message_hash) {
+                        tracing::debug!(
+                            content_preview = %if combined_text.len() > 100 { 
+                                format!("{}...", &combined_text[..100]) 
+                            } else { 
+                                combined_text.clone() 
+                            },
+                            "Skipping security scan - message was previously approved by user"
+                        );
+                        continue;
+                    }
+                    
+                    if denied_messages.contains(&message_hash) {
+                        tracing::debug!(
+                            content_preview = %if combined_text.len() > 100 { 
+                                format!("{}...", &combined_text[..100]) 
+                            } else { 
+                                combined_text.clone() 
+                            },
+                            "Skipping security scan - message was previously denied by user"
+                        );
+                        continue;
+                    }
+                    
+                    drop(approved_messages); // Release the locks
+                    drop(denied_messages);
                     
                     // Skip scanning obviously safe messages to reduce false positives
                     let is_obviously_safe = Self::is_obviously_safe_message(&combined_text);
@@ -746,11 +800,23 @@ impl Agent {
                                                 crate::permission::Permission::AllowOnce |
                                                 crate::permission::Permission::AlwaysAllow => {
                                                     tracing::info!("User approved potentially harmful message, proceeding");
-                                                    // Continue with normal processing - we'll need to restart the reply process
+                                                    // Add message to approved cache to skip future scans
+                                                    let message_hash = Self::hash_message_content(&combined_text);
+                                                    let mut approved_messages = self.approved_security_messages.lock().await;
+                                                    approved_messages.insert(message_hash);
+                                                    drop(approved_messages);
+                                                    tracing::info!("Message hash added to approved cache");
+                                                    return;
                                                 },
                                                 crate::permission::Permission::DenyOnce |
                                                 crate::permission::Permission::Cancel => {
                                                     tracing::info!("User denied potentially harmful message, blocking");
+                                                    // Add message to denied cache to skip future scans
+                                                    let message_hash = Self::hash_message_content(&combined_text);
+                                                    let mut denied_messages = self.denied_security_messages.lock().await;
+                                                    denied_messages.insert(message_hash);
+                                                    drop(denied_messages);
+                                                    tracing::info!("Message hash added to denied cache");
                                                     yield AgentEvent::Message(
                                                         Message::assistant().with_text("Message blocked by user request due to security concerns.")
                                                     );
