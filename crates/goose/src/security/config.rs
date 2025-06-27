@@ -88,11 +88,11 @@ impl Default for SecurityConfig {
             scan_threshold: ThreatThreshold::Medium,
             confidence_threshold: 0.7, // Default to 70% confidence to reduce false positives
             ensemble_config: Some(EnsembleConfig {
-                voting_strategy: VotingStrategy::AnyDetection, // Flag if any model detects threat
+                voting_strategy: VotingStrategy::MajorityVote, // Require majority to agree (reduces false positives)
                 member_configs: vec![
                     EnsembleMember {
                         scanner_type: ScannerType::RustDeepsetDeberta,
-                        confidence_threshold: 0.7,
+                        confidence_threshold: 0.95, // Higher threshold for Deepset to reduce false positives
                         weight: 1.0,
                     },
                     EnsembleMember {

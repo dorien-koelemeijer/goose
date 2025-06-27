@@ -13,6 +13,7 @@ use mcp_core::protocol::JsonRpcMessage;
 use crate::agents::sub_recipe_manager::SubRecipeManager;
 use crate::config::{Config, ExtensionConfigManager, PermissionManager};
 use crate::message::Message;
+use mcp_core::role::Role;
 use crate::permission::permission_judge::check_tool_permissions;
 use crate::permission::{PermissionConfirmation, SecurityConfirmation};
 use crate::providers::base::Provider;
@@ -78,6 +79,43 @@ pub enum AgentEvent {
 }
 
 impl Agent {
+    /// Check if a message is obviously safe and doesn't need security scanning
+    fn is_obviously_safe_message(text: &str) -> bool {
+        let text_lower = text.to_lowercase();
+        let text_len = text.len();
+        
+        // Very short messages with only safe characters
+        if text_len <= 15 && text.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?👋🎉".contains(c)) {
+            return true;
+        }
+        
+        // Common greetings and safe patterns
+        let safe_patterns = [
+            "hey", "hi", "hello", "hiya", "heya", "heyy", "heyyy",
+            "good morning", "good afternoon", "good evening",
+            "how are you", "what's up", "whats up",
+            "thanks", "thank you", "thx",
+            "ok", "okay", "sure", "yes", "no",
+            "goose", "nice", "great", "awesome",
+            "👋", "🎉", "😊", "🙂", "😄",
+        ];
+        
+        // Check if the message is primarily composed of safe patterns
+        if safe_patterns.iter().any(|pattern| {
+            text_lower.contains(pattern) && 
+            text_len <= 50 && // Keep it short to avoid false negatives
+            !text_lower.contains("ignore") && 
+            !text_lower.contains("forget") &&
+            !text_lower.contains("system") &&
+            !text_lower.contains("prompt") &&
+            !text_lower.contains("instruction")
+        }) {
+            return true;
+        }
+        
+        false
+    }
+
     pub fn new() -> Self {
         // Create channels with buffer size 32 (adjust if needed)
         let (confirm_tx, confirm_rx) = mpsc::channel(32);
@@ -591,6 +629,21 @@ impl Agent {
 
     pub async fn configure_security(&self, config: crate::security::config::SecurityConfig) {
         let security_manager = SecurityManager::new(config);
+        
+        // Pre-warm models if security is enabled
+        if security_manager.is_enabled() {
+            tracing::info!("Security is enabled, pre-warming ONNX models...");
+            // Clone the security manager for the background task
+            let security_manager_clone = security_manager.clone();
+            tokio::spawn(async move {
+                if let Err(e) = security_manager_clone.prewarm_models().await {
+                    tracing::warn!("Failed to pre-warm security models: {}", e);
+                } else {
+                    tracing::info!("Security models pre-warmed successfully");
+                }
+            });
+        }
+        
         let mut manager_lock = self.security_manager.lock().await;
         *manager_lock = Some(security_manager);
     }
@@ -618,10 +671,14 @@ impl Agent {
         if let Some(security_manager) = &*self.security_manager.lock().await {
             tracing::info!(
                 total_messages = messages.len(),
-                "Starting security scan of all incoming messages"
+                "Starting security scan of user messages only"
             );
             
             for (i, message) in messages.iter().enumerate() {
+                // Only scan user messages, skip assistant messages
+                if message.role != Role::User {
+                    continue;
+                }
                 // Extract text content from message
                 let text_contents: Vec<String> = message.content.iter()
                     .filter_map(|c| c.as_text().map(String::from))
@@ -630,9 +687,8 @@ impl Agent {
                 if !text_contents.is_empty() {
                     let combined_text = text_contents.join("\n");
                     
-                    // Skip scanning very short, obviously safe messages to reduce false positives during testing
-                    let is_obviously_safe = combined_text.len() <= 10 && 
-                                          combined_text.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?👋".contains(c));
+                    // Skip scanning obviously safe messages to reduce false positives
+                    let is_obviously_safe = Self::is_obviously_safe_message(&combined_text);
                     
                     if !is_obviously_safe {
                         let content = vec![Content::text(combined_text.clone())];
@@ -780,55 +836,9 @@ impl Agent {
                     &toolshim_tools,
                 ).await {
                     Ok((response, usage)) => {
-                        // Security scanning: scan agent response for threats
-                        let mut safe_response = response.clone();
-                        if let Some(security_manager) = &*self.security_manager.lock().await {
-                            // Extract text content from response
-                            let text_contents: Vec<String> = response.content.iter()
-                                .filter_map(|c| c.as_text().map(String::from))
-                                .collect();
-                            
-                            if !text_contents.is_empty() {
-                                let combined_text = text_contents.join("\n");
-                                
-                                // Skip scanning responses that are likely Goose introductions (common false positives)
-                                let is_goose_intro = combined_text.contains("I'm Goose") || 
-                                                   combined_text.contains("I'm here to help") ||
-                                                   combined_text.contains("Goose Desktop application") ||
-                                                   combined_text.contains("Nice to meet you");
-                                
-                                if !is_goose_intro {
-                                    let content = vec![Content::text(combined_text)];
-                                    
-                                    tracing::info!("Scanning agent response for security threats");
-                                    
-                                    if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
-                                        if security_manager.should_ask_user(&scan_result) {
-                                            tracing::warn!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in agent response, would ask user for confirmation"
-                                            );
-                                            // TODO: Implement security confirmation request to UI for agent response
-                                        } else if security_manager.should_block(&scan_result) {
-                                            tracing::error!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in agent response, sanitizing"
-                                            );
-                                            // Replace response with safe content
-                                            let safe_content = security_manager.get_safe_content(&content, &scan_result);
-                                            safe_response = Message::assistant()
-                                                .with_text(safe_content.first()
-                                                    .and_then(|c| c.as_text())
-                                                    .unwrap_or("[Response blocked due to security threat]"));
-                                        }
-                                    }
-                                } else {
-                                    tracing::debug!("Skipping security scan of agent response (detected as Goose introduction)");
-                                }
-                            }
-                        }
+                        // NOTE: Agent response scanning disabled - causes too many false positives
+                        // Only scan user input messages, not agent responses
+                        let safe_response = response.clone();
                         // Emit model change event if provider is lead-worker
                         let provider = self.provider().await?;
                         if let Some(lead_worker) = provider.as_lead_worker() {

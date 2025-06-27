@@ -1,5 +1,6 @@
 pub mod config;
 pub mod content_scanner;
+pub mod model_downloader;
 pub mod model_pool;
 pub mod rust_scanners;
 pub mod threat_detection;
@@ -33,6 +34,7 @@ use threat_detection::{
 #[cfg(feature = "security-onnx")]
 use rust_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner, OnnxLlamaPromptGuard2Scanner};
 
+#[derive(Clone)]
 pub struct SecurityManager {
     config: SecurityConfig,
     scanner: Option<Arc<dyn ContentScanner>>,
@@ -236,6 +238,26 @@ impl SecurityManager {
         self.config.enabled && self.scanner.is_some()
     }
 
+    pub async fn prewarm_models(&self) -> Result<()> {
+        if !self.is_enabled() {
+            return Ok(());
+        }
+
+        tracing::info!("Pre-warming security models in background...");
+        
+        // Create a dummy content to trigger model loading
+        let dummy_content = vec![Content::text("test")];
+        
+        // This will trigger model downloads and caching
+        if let Err(e) = self.scan_content(&dummy_content).await {
+            tracing::warn!("Failed to pre-warm models: {}", e);
+            return Err(e);
+        }
+        
+        tracing::info!("Security models pre-warmed successfully");
+        Ok(())
+    }
+
     pub async fn scan_content(&self, content: &[Content]) -> Result<Option<ScanResult>> {
         if !self.is_enabled() {
             tracing::info!("Security scanner is disabled, skipping content scan");
@@ -262,14 +284,18 @@ impl SecurityManager {
         let scanner = self.scanner.as_ref().unwrap();
         let scan_result = scanner.scan_content(content).await?;
 
-        // Log the scan result
+        // Log the scan result with message content for debugging
         match scan_result.threat_level {
             ThreatLevel::Safe => {
-                tracing::info!("Content scan result: Safe");
+                tracing::info!(
+                    content_preview = %preview,
+                    "Content scan result: Safe"
+                );
             }
             ThreatLevel::Low => {
                 tracing::info!(
                     threat = "low",
+                    content_preview = %preview,
                     explanation = %scan_result.explanation,
                     "Content scan detected low threat"
                 );
@@ -277,13 +303,15 @@ impl SecurityManager {
             ThreatLevel::Medium => {
                 tracing::info!(
                     threat = "medium",
+                    content_preview = %preview,
                     explanation = %scan_result.explanation,
                     "Content scan detected medium threat"
                 );
             }
             ThreatLevel::High | ThreatLevel::Critical => {
-                tracing::info!(
+                tracing::warn!(
                     threat = ?scan_result.threat_level,
+                    content_preview = %preview,
                     explanation = %scan_result.explanation,
                     "Content scan detected high/critical threat"
                 );
