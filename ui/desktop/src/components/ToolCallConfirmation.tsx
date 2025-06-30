@@ -108,7 +108,11 @@ export default function ToolConfirmation({
             <span className="ml-2 text-textStandard">
               {isClicked
                 ? 'Tool confirmation is not available'
-                : `${snakeToTitleCase(toolName.substring(toolName.lastIndexOf('__') + 2))} is ${actionDisplay}`}
+                : `${snakeToTitleCase(
+                    toolName.includes('__')
+                      ? toolName.substring(toolName.lastIndexOf('__') + 2)
+                      : toolName
+                  )} is ${actionDisplay}`}
             </span>
           </div>
 

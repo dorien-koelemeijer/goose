@@ -62,8 +62,8 @@ const LoadingGoose = ({ messages = [] }: LoadingGooseProps) => {
   const isPossiblySecuritySetup = hasSecuritySetupMessage || showSetupMessage;
 
   const loadingText = isPossiblySecuritySetup
-    ? 'goose is being set up, this could take up to a minute…'
-    : 'goose is working on it…';
+    ? 'Goose is being set up, this could take up to a minute…'
+    : 'Goose is working on it…';
 
   return (
     <div className="w-full pb-[2px]">

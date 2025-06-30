@@ -17,13 +17,6 @@ def convert_model_to_onnx(model_name: str, output_dir: str = "onnx_models"):
     Path(output_dir).mkdir(exist_ok=True)
 
     try:
-        # Handle authentication for gated models
-        hf_token = os.getenv('HUGGINGFACE_TOKEN') or os.getenv('HF_TOKEN')
-        auth_kwargs = {}
-        if hf_token:
-            auth_kwargs['token'] = hf_token
-            print(f"   Using HF token for authentication")
-
         # Load model and tokenizer
         print(f"   Loading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(model_name, **auth_kwargs)
@@ -69,11 +62,6 @@ def convert_model_to_onnx(model_name: str, output_dir: str = "onnx_models"):
 
     except Exception as e:
         print(f"❌ Failed to convert {model_name}: {e}")
-        if "gated repo" in str(e).lower() or "access" in str(e).lower():
-            print(f"   This might be a gated model. Make sure you:")
-            print(f"   1. Have access to {model_name} on Hugging Face")
-            print(f"   2. Set your HF token: export HUGGINGFACE_TOKEN='your_token'")
-            print(f"   3. Get a token from: https://huggingface.co/settings/tokens")
         return False
 
 def main():
@@ -84,21 +72,6 @@ def main():
     ]
 
     print("🚀 Starting ONNX model conversion...")
-
-    # Check for Hugging Face token
-    hf_token = os.getenv('HUGGINGFACE_TOKEN') or os.getenv('HF_TOKEN')
-    if not hf_token:
-        print("⚠️  No Hugging Face token found in environment variables")
-        print("   For gated models like Llama Guard 2, you need to set:")
-        print("   export HUGGINGFACE_TOKEN='your_token_here'")
-        print("   or")
-        print("   export HF_TOKEN='your_token_here'")
-        print("   You can get a token from: https://huggingface.co/settings/tokens")
-        print("   Continuing anyway - public models will still work...")
-        print()
-    else:
-        print(f"✅ Found Hugging Face token: {hf_token[:8]}...")
-        print()
 
     successful = 0
     for model_name in models_to_convert:
