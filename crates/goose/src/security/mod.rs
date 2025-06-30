@@ -27,38 +27,23 @@ use mcp_core::Content;
 use serde_json::Value;
 use std::sync::Arc;
 use threat_detection::{
-    DeepsetDebertaScanner, LlamaPromptGuard2Scanner, LlamaPromptGuardScanner, MistralNemoScanner,
-    OpenAiModerationScanner, ParallelEnsembleScanner, ToxicBertScanner,
+    DeepsetDebertaScanner, LazyEnsembleScanner,
+    OpenAiModerationScanner, ToxicBertScanner,
 };
 
 #[cfg(feature = "security-onnx")]
-use rust_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner, OnnxLlamaPromptGuard2Scanner};
+use rust_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner};
 
 #[derive(Clone)]
 pub struct SecurityManager {
     config: SecurityConfig,
     scanner: Option<Arc<dyn ContentScanner>>,
 }
-
+// check if this is the right scanner or if it should be RustProtectAiDeberta
 impl SecurityManager {
     pub fn new(config: SecurityConfig) -> Self {
         let scanner = if config.enabled {
             match config.scanner_type {
-                ScannerType::MistralNemo => {
-                    tracing::info!(
-                        enabled = true,
-                        scanner = ?config.scanner_type,
-                        endpoint = %config.ollama_endpoint,
-                        action_policy = ?config.action_policy,
-                        threshold = ?config.scan_threshold,
-                        confidence_threshold = config.confidence_threshold,
-                        "Initializing Mistral Nemo security scanner"
-                    );
-                    Some(
-                        Arc::new(MistralNemoScanner::new(config.ollama_endpoint.clone()))
-                            as Arc<dyn ContentScanner>,
-                    )
-                }
                 ScannerType::ProtectAiDeberta => {
                     tracing::info!(
                         enabled = true,
@@ -66,24 +51,10 @@ impl SecurityManager {
                         action_policy = ?config.action_policy,
                         threshold = ?config.scan_threshold,
                         confidence_threshold = config.confidence_threshold,
-                        "Initializing ProtectAI DeBERTa security scanner"
+                        "Initializing ProtectAI DeBERTa security scanner (using Deepset as fallback)"
                     );
                     Some(
-                        Arc::new(LlamaPromptGuardScanner::new(config.confidence_threshold))
-                            as Arc<dyn ContentScanner>,
-                    )
-                }
-                ScannerType::LlamaPromptGuard2 => {
-                    tracing::info!(
-                        enabled = true,
-                        scanner = ?config.scanner_type,
-                        action_policy = ?config.action_policy,
-                        threshold = ?config.scan_threshold,
-                        confidence_threshold = config.confidence_threshold,
-                        "Initializing Llama Prompt Guard 2 security scanner"
-                    );
-                    Some(
-                        Arc::new(LlamaPromptGuard2Scanner::new(config.confidence_threshold))
+                        Arc::new(DeepsetDebertaScanner::new(config.confidence_threshold))
                             as Arc<dyn ContentScanner>,
                     )
                 }
@@ -144,27 +115,6 @@ impl SecurityManager {
                         None
                     }
                 }
-                ScannerType::RustLlamaPromptGuard2 => {
-                    #[cfg(feature = "security-onnx")]
-                    {
-                        tracing::info!(
-                            enabled = true,
-                            scanner = ?config.scanner_type,
-                            action_policy = ?config.action_policy,
-                            threshold = ?config.scan_threshold,
-                            confidence_threshold = config.confidence_threshold,
-                            "Initializing ONNX Llama Prompt Guard 2 security scanner"
-                        );
-                        Some(Arc::new(OnnxLlamaPromptGuard2Scanner::new(
-                            config.confidence_threshold,
-                        )) as Arc<dyn ContentScanner>)
-                    }
-                    #[cfg(not(feature = "security-onnx"))]
-                    {
-                        tracing::warn!("ONNX scanner requested but security-onnx feature not enabled, falling back to None");
-                        None
-                    }
-                }
                 ScannerType::OpenAiModeration => {
                     tracing::info!(
                         enabled = true,
@@ -201,17 +151,10 @@ impl SecurityManager {
                             confidence_threshold = config.confidence_threshold,
                             voting_strategy = ?ensemble_config.voting_strategy,
                             member_count = ensemble_config.member_configs.len(),
-                            "Initializing Parallel Ensemble security scanner"
+                            "Initializing Parallel Ensemble security scanner (lazy loading)"
                         );
-                        match ParallelEnsembleScanner::new(ensemble_config) {
-                            Ok(ensemble_scanner) => {
-                                Some(Arc::new(ensemble_scanner) as Arc<dyn ContentScanner>)
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to create ensemble scanner: {}", e);
-                                None
-                            }
-                        }
+                        // Create a lazy ensemble scanner that doesn't immediately load models
+                        Some(Arc::new(LazyEnsembleScanner::new(ensemble_config)) as Arc<dyn ContentScanner>)
                     } else {
                         tracing::error!("ParallelEnsemble scanner type requires ensemble_config");
                         None
@@ -236,6 +179,61 @@ impl SecurityManager {
 
     pub fn is_enabled(&self) -> bool {
         self.config.enabled && self.scanner.is_some()
+    }
+
+    pub async fn check_models_need_download(&self) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+
+        // For ONNX scanners, check if models exist in cache
+        #[cfg(feature = "security-onnx")]
+        {
+            use crate::security::model_downloader::{get_global_downloader, ModelInfo};
+            
+            // Check if we're using ONNX scanners that need model downloads
+            if matches!(self.config.scanner_type, 
+                ScannerType::RustDeepsetDeberta | 
+                ScannerType::RustProtectAiDeberta |
+                ScannerType::ParallelEnsemble
+            ) {
+                if let Ok(downloader) = get_global_downloader().await {
+                    // Check if any required models are missing
+                    let models_to_check = match self.config.scanner_type {
+                        ScannerType::RustDeepsetDeberta => vec![ModelInfo::deepset_deberta()],
+                        ScannerType::RustProtectAiDeberta => vec![ModelInfo::protectai_deberta()],
+                        ScannerType::ParallelEnsemble => {
+                            // Check ensemble members
+                            if let Some(ref ensemble_config) = self.config.ensemble_config {
+                                let mut models = Vec::new();
+                                for member in &ensemble_config.member_configs {
+                                    match member.scanner_type {
+                                        ScannerType::RustDeepsetDeberta => models.push(ModelInfo::deepset_deberta()),
+                                        ScannerType::RustProtectAiDeberta => models.push(ModelInfo::protectai_deberta()),
+                                        _ => {}
+                                    }
+                                }
+                                models
+                            } else {
+                                vec![]
+                            }
+                        },
+                        _ => vec![]
+                    };
+                    
+                    for model_info in models_to_check {
+                        let model_path = downloader.get_cache_dir().join(&model_info.onnx_filename);
+                        let tokenizer_path = downloader.get_cache_dir().join(&model_info.tokenizer_filename);
+                        
+                        if !model_path.exists() || !tokenizer_path.exists() {
+                            return true; // At least one model needs download
+                        }
+                    }
+                }
+            }
+        }
+        
+        false // No downloads needed
     }
 
     pub async fn prewarm_models(&self) -> Result<()> {
@@ -282,43 +280,56 @@ impl SecurityManager {
         );
         
         let scanner = self.scanner.as_ref().unwrap();
-        let scan_result = scanner.scan_content(content).await?;
-
-        // Log the scan result with message content for debugging
-        match scan_result.threat_level {
-            ThreatLevel::Safe => {
-                tracing::info!(
-                    content_preview = %preview,
-                    "Content scan result: Safe"
-                );
+        
+        // Handle the case where security models aren't ready yet
+        match scanner.scan_content(content).await {
+            Ok(scan_result) => {
+                // Log the scan result with message content for debugging
+                match scan_result.threat_level {
+                    ThreatLevel::Safe => {
+                        tracing::info!(
+                            content_preview = %preview,
+                            "Content scan result: Safe"
+                        );
+                    }
+                    ThreatLevel::Low => {
+                        tracing::info!(
+                            threat = "low",
+                            content_preview = %preview,
+                            explanation = %scan_result.explanation,
+                            "Content scan detected low threat"
+                        );
+                    }
+                    ThreatLevel::Medium => {
+                        tracing::info!(
+                            threat = "medium",
+                            content_preview = %preview,
+                            explanation = %scan_result.explanation,
+                            "Content scan detected medium threat"
+                        );
+                    }
+                    ThreatLevel::High | ThreatLevel::Critical => {
+                        tracing::warn!(
+                            threat = ?scan_result.threat_level,
+                            content_preview = %preview,
+                            explanation = %scan_result.explanation,
+                            "Content scan detected high/critical threat"
+                        );
+                    }
+                }
+                Ok(Some(scan_result))
             }
-            ThreatLevel::Low => {
-                tracing::info!(
-                    threat = "low",
-                    content_preview = %preview,
-                    explanation = %scan_result.explanation,
-                    "Content scan detected low threat"
-                );
-            }
-            ThreatLevel::Medium => {
-                tracing::info!(
-                    threat = "medium",
-                    content_preview = %preview,
-                    explanation = %scan_result.explanation,
-                    "Content scan detected medium threat"
-                );
-            }
-            ThreatLevel::High | ThreatLevel::Critical => {
-                tracing::warn!(
-                    threat = ?scan_result.threat_level,
-                    content_preview = %preview,
-                    explanation = %scan_result.explanation,
-                    "Content scan detected high/critical threat"
-                );
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("Security system not ready") {
+                    // Return a special error that the agent can handle
+                    Err(anyhow::anyhow!("SECURITY_NOT_READY: 🔒 Initialising Goose security models, this may take up to a minute. Please wait..."))
+                } else {
+                    // Other errors should be propagated normally
+                    Err(e)
+                }
             }
         }
-
-        Ok(Some(scan_result))
     }
 
     pub async fn scan_tool_result(

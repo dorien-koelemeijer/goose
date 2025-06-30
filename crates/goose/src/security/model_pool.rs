@@ -57,8 +57,10 @@ impl PythonModelPool {
 
     fn get_script_path(&self, model_name: &str) -> Result<String> {
         // Return appropriate script path based on model
-        if model_name.contains("llama") {
-            Ok("llama_prompt_guard2_scanner.py".to_string())
+        if model_name.contains("deepset") {
+            Ok("deepset_deberta_scanner.py".to_string())
+        } else if model_name.contains("protectai") {
+            Ok("protectai_deberta_scanner.py".to_string())
         } else {
             Ok("prompt_injection_scanner.py".to_string())
         }

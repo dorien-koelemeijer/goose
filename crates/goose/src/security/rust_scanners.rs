@@ -346,40 +346,10 @@ mod onnx_scanners {
             self.analyze_text(&contextual_content).await
         }
     }
-
-    pub struct OnnxLlamaPromptGuard2Scanner {
-        confidence_threshold: f32,
-    }
-
-    impl OnnxLlamaPromptGuard2Scanner {
-        pub fn new(confidence_threshold: f32) -> Self {
-            Self { confidence_threshold }
-        }
-    }
-
-    #[async_trait]
-    impl ContentScanner for OnnxLlamaPromptGuard2Scanner {
-        async fn scan_content(&self, _content: &[Content]) -> Result<ScanResult> {
-            // Placeholder implementation - would load Llama Guard 2 model
-            Ok(ScanResult {
-                threat_level: ThreatLevel::Safe,
-                explanation: "ONNX Llama Guard 2 scanner placeholder".to_string(),
-                sanitized_content: None,
-            })
-        }
-
-        async fn scan_tool_result(&self, _tool_name: &str, _arguments: &Value, _result: &[Content]) -> Result<ScanResult> {
-            Ok(ScanResult {
-                threat_level: ThreatLevel::Safe,
-                explanation: "ONNX Llama Guard 2 scanner placeholder".to_string(),
-                sanitized_content: None,
-            })
-        }
-    }
 }
 
 #[cfg(feature = "security-onnx")]
-pub use onnx_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner, OnnxLlamaPromptGuard2Scanner};
+pub use onnx_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner};
 
 // For when ONNX feature is not enabled, provide stub implementations
 #[cfg(not(feature = "security-onnx"))]
@@ -393,6 +363,23 @@ impl OnnxDeepsetDebertaScanner {
         Self {
             _confidence_threshold: confidence_threshold,
         }
+    }
+}
+
+#[cfg(not(feature = "security-onnx"))]
+#[async_trait::async_trait]
+impl super::content_scanner::ContentScanner for OnnxDeepsetDebertaScanner {
+    async fn scan_content(&self, _content: &[mcp_core::Content]) -> anyhow::Result<super::content_scanner::ScanResult> {
+        Err(anyhow::anyhow!("ONNX scanner not available (security-onnx feature not enabled)"))
+    }
+
+    async fn scan_tool_result(
+        &self,
+        _tool_name: &str,
+        _arguments: &serde_json::Value,
+        _result: &[mcp_core::Content],
+    ) -> anyhow::Result<super::content_scanner::ScanResult> {
+        Err(anyhow::anyhow!("ONNX scanner not available (security-onnx feature not enabled)"))
     }
 }
 
@@ -411,15 +398,18 @@ impl OnnxProtectAiDebertaScanner {
 }
 
 #[cfg(not(feature = "security-onnx"))]
-pub struct OnnxLlamaPromptGuard2Scanner {
-    _confidence_threshold: f32,
-}
+#[async_trait::async_trait]
+impl super::content_scanner::ContentScanner for OnnxProtectAiDebertaScanner {
+    async fn scan_content(&self, _content: &[mcp_core::Content]) -> anyhow::Result<super::content_scanner::ScanResult> {
+        Err(anyhow::anyhow!("ONNX scanner not available (security-onnx feature not enabled)"))
+    }
 
-#[cfg(not(feature = "security-onnx"))]
-impl OnnxLlamaPromptGuard2Scanner {
-    pub fn new(confidence_threshold: f32) -> Self {
-        Self {
-            _confidence_threshold: confidence_threshold,
-        }
+    async fn scan_tool_result(
+        &self,
+        _tool_name: &str,
+        _arguments: &serde_json::Value,
+        _result: &[mcp_core::Content],
+    ) -> anyhow::Result<super::content_scanner::ScanResult> {
+        Err(anyhow::anyhow!("ONNX scanner not available (security-onnx feature not enabled)"))
     }
 }

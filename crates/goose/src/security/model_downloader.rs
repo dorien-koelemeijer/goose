@@ -179,7 +179,7 @@ impl ModelDownloader {
         Ok(())
     }
 
-    async fn create_conversion_script(&self, model_info: &ModelInfo) -> Result<PathBuf> {
+    async fn create_conversion_script(&self, _model_info: &ModelInfo) -> Result<PathBuf> {
         let script_content = format!(
             r#"#!/usr/bin/env python3
 """
@@ -318,14 +318,6 @@ impl ModelInfo {
         Self {
             hf_model_name: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
             onnx_filename: "protectai_deberta-v3-base-prompt-injection-v2.onnx".to_string(),
-            tokenizer_filename: "tokenizer.json".to_string(),
-        }
-    }
-
-    pub fn llama_prompt_guard_2() -> Self {
-        Self {
-            hf_model_name: "meta-llama/Llama-Prompt-Guard-2-86M".to_string(),
-            onnx_filename: "meta-llama_Llama-Prompt-Guard-2-86M.onnx".to_string(),
             tokenizer_filename: "tokenizer.json".to_string(),
         }
     }

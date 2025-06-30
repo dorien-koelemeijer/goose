@@ -22,13 +22,29 @@ pub async fn run() -> Result<()> {
     let new_agent = Agent::new();
     let agent_ref = Arc::new(new_agent);
 
-    // Configure security based on user configuration
+    // Configure security based on user configuration - but don't block on model downloads
     let config = Config::global();
     if let Ok(security_settings) = config.get_param::<SecuritySettings>("security") {
         if security_settings.enabled {
             let security_config = security_settings.to_security_config();
-            agent_ref.configure_security(security_config).await;
-            info!("Security scanning enabled with ONNX ensemble (Deepset + ProtectAI DeBERTa models)");
+            
+            // Start security configuration in background - don't block server startup
+            let agent_clone = agent_ref.clone();
+            tokio::spawn(async move {
+                match agent_clone.configure_security(security_config).await {
+                    Ok(init_messages) => {
+                        info!("Security scanning enabled with ONNX ensemble (Deepset + ProtectAI DeBERTa models)");
+                        if !init_messages.is_empty() {
+                            info!("Security initialization messages: {} messages generated", init_messages.len());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize security system: {}", e);
+                    }
+                }
+            });
+            
+            info!("Security system initialization started in background");
         } else {
             info!("Security scanning is disabled in configuration");
         }

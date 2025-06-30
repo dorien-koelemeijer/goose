@@ -62,8 +62,8 @@ copy-binary BUILD_MODE="release":
     @if [ -f ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ]; then \
         echo "Copying ONNX runtime library from target/{{BUILD_MODE}}..."; \
         cp -p ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ./ui/desktop/src/bin/; \
-        echo "Fixing rpath for ONNX runtime library..."; \
-        install_name_tool -add_rpath @executable_path ./ui/desktop/src/bin/goosed 2>/dev/null || true; \
+        echo "Fixing library path for ONNX runtime library..."; \
+        install_name_tool -change @rpath/libonnxruntime.1.16.0.dylib $(pwd)/ui/desktop/src/bin/libonnxruntime.1.16.0.dylib ./ui/desktop/src/bin/goosed 2>/dev/null || true; \
     else \
         echo "ONNX runtime library not found, skipping..."; \
     fi

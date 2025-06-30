@@ -56,7 +56,7 @@ fn test_should_block_logic() {
 
     let config = SecurityConfig {
         enabled: true,
-        scanner_type: ScannerType::MistralNemo,
+        scanner_type: ScannerType::DeepsetDeberta,
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Block,
         scan_threshold: ThreatThreshold::Medium,
@@ -103,7 +103,7 @@ fn test_get_safe_content_blocking() {
 
     let config = SecurityConfig {
         enabled: true,
-        scanner_type: ScannerType::MistralNemo,
+        scanner_type: ScannerType::DeepsetDeberta,
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Block,
         scan_threshold: ThreatThreshold::Medium,
@@ -141,7 +141,7 @@ fn test_get_safe_content_sanitize() {
 
     let config = SecurityConfig {
         enabled: true,
-        scanner_type: ScannerType::MistralNemo,
+        scanner_type: ScannerType::DeepsetDeberta,
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::Sanitize,
         scan_threshold: ThreatThreshold::Medium,
@@ -178,7 +178,7 @@ fn test_get_safe_content_log_only() {
 
     let config = SecurityConfig {
         enabled: true,
-        scanner_type: ScannerType::MistralNemo,
+        scanner_type: ScannerType::DeepsetDeberta,
         ollama_endpoint: "http://localhost:11434".to_string(),
         action_policy: ActionPolicy::LogOnly,
         scan_threshold: ThreatThreshold::Medium,

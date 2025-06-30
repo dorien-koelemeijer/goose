@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -640,25 +639,43 @@ impl Agent {
         }
     }
 
-    pub async fn configure_security(&self, config: crate::security::config::SecurityConfig) {
+    pub async fn configure_security(&self, config: crate::security::config::SecurityConfig) -> Result<Vec<Message>> {
         let security_manager = SecurityManager::new(config);
+        let mut initialization_messages = Vec::new();
         
-        // Pre-warm models if security is enabled
+        // Set up security manager without pre-warming models
         if security_manager.is_enabled() {
-            tracing::info!("Security is enabled, pre-warming ONNX models...");
-            // Clone the security manager for the background task
-            let security_manager_clone = security_manager.clone();
-            tokio::spawn(async move {
-                if let Err(e) = security_manager_clone.prewarm_models().await {
-                    tracing::warn!("Failed to pre-warm security models: {}", e);
-                } else {
-                    tracing::info!("Security models pre-warmed successfully");
-                }
-            });
+            tracing::info!("Security is enabled, models will be loaded on first use");
+            
+            // Check if models need to be downloaded (but don't download them yet)
+            let needs_download = security_manager.check_models_need_download().await;
+            
+            if needs_download {
+                tracing::info!("Security models will be downloaded on first message");
+                initialization_messages.push(
+                    Message::assistant().with_text(
+                        "🔒 **Security System Ready**\n\nSecurity models will be initialized when you send your first message. This may take up to a minute on first run."
+                    )
+                );
+            } else {
+                tracing::info!("Security models are already cached");
+                initialization_messages.push(
+                    Message::assistant().with_text(
+                        "🔒 **Security System Ready**\n\nPrompt injection detection is active and ready to protect your conversations."
+                    )
+                );
+            }
         }
         
         let mut manager_lock = self.security_manager.lock().await;
         *manager_lock = Some(security_manager);
+        
+        Ok(initialization_messages)
+    }
+
+    /// Configure security without returning initialization messages (for backward compatibility)
+    pub async fn configure_security_silent(&self, config: crate::security::config::SecurityConfig) {
+        let _ = self.configure_security(config).await;
     }
 
     pub async fn handle_security_confirmation(
@@ -680,6 +697,22 @@ impl Agent {
         tracing::info!("Cleared security message caches");
     }
 
+    /// Debug: Print current security cache contents
+    pub async fn debug_security_caches(&self) {
+        let approved = self.approved_security_messages.lock().await;
+        let denied = self.denied_security_messages.lock().await;
+        tracing::info!("Security cache debug - Approved: {} entries, Denied: {} entries", 
+            approved.len(), denied.len());
+        
+        for (i, hash) in approved.iter().enumerate() {
+            tracing::info!("Approved[{}]: {}", i, hash);
+        }
+        
+        for (i, hash) in denied.iter().enumerate() {
+            tracing::info!("Denied[{}]: {}", i, hash);
+        }
+    }
+
     #[instrument(skip(self, messages, session), fields(user_message))]
     pub async fn reply(
         &self,
@@ -689,20 +722,14 @@ impl Agent {
         let mut messages = messages.to_vec();
         let reply_span = tracing::Span::current();
 
-        // Security scanning: scan all incoming messages for threats
+        // Security scanning: scan only the latest user message for threats
         if let Some(security_manager) = &*self.security_manager.lock().await {
-            tracing::info!(
-                total_messages = messages.len(),
-                "Starting security scan of user messages only"
-            );
-            
-            for (i, message) in messages.iter().enumerate() {
-                // Only scan user messages, skip assistant messages
-                if message.role != Role::User {
-                    continue;
-                }
-                // Extract text content from message
-                let text_contents: Vec<String> = message.content.iter()
+            // Find the last user message (the new one we need to scan)
+            if let Some(latest_user_message) = messages.iter().rev().find(|msg| msg.role == Role::User) {
+                tracing::info!("Starting security scan of latest user message");
+                
+                // Extract text content from the latest user message
+                let text_contents: Vec<String> = latest_user_message.content.iter()
                     .filter_map(|c| c.as_text().map(String::from))
                     .collect();
                 
@@ -711,35 +738,93 @@ impl Agent {
                     
                     // Check if this message was previously approved or denied
                     let message_hash = Self::hash_message_content(&combined_text);
+                    tracing::debug!(
+                        content = %combined_text,
+                        hash = %message_hash,
+                        "Generated hash for latest user message"
+                    );
                     let approved_messages = self.approved_security_messages.lock().await;
                     let denied_messages = self.denied_security_messages.lock().await;
                     
-                    if approved_messages.contains(&message_hash) {
-                        tracing::debug!(
-                            content_preview = %if combined_text.len() > 100 { 
-                                format!("{}...", &combined_text[..100]) 
-                            } else { 
-                                combined_text.clone() 
-                            },
-                            "Skipping security scan - message was previously approved by user"
-                        );
-                        continue;
-                    }
+                    let is_approved = approved_messages.contains(&message_hash);
+                    let is_denied = denied_messages.contains(&message_hash);
                     
-                    if denied_messages.contains(&message_hash) {
-                        tracing::debug!(
-                            content_preview = %if combined_text.len() > 100 { 
-                                format!("{}...", &combined_text[..100]) 
-                            } else { 
-                                combined_text.clone() 
-                            },
-                            "Skipping security scan - message was previously denied by user"
-                        );
-                        continue;
-                    }
-                    
-                    drop(approved_messages); // Release the locks
+                    drop(approved_messages); // Release the locks early
                     drop(denied_messages);
+                    
+                    if is_approved {
+                        tracing::debug!(
+                            content_preview = %if combined_text.len() > 100 { 
+                                format!("{}...", &combined_text[..100]) 
+                            } else { 
+                                combined_text.clone() 
+                            },
+                            "Message was previously approved by user - will scan but skip confirmation"
+                        );
+                        
+                        // Scan the message
+                        let content = vec![Content::text(combined_text.clone())];
+                        match security_manager.scan_content(&content).await {
+                            Ok(Some(scan_result)) => {
+                                if security_manager.should_ask_user(&scan_result) {
+                                    // This was previously approved, so allow it through without asking again
+                                    tracing::info!(
+                                        threat_level = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "Security threat detected but message was previously approved by user"
+                                    );
+                                } else if security_manager.should_block(&scan_result) {
+                                    // Even if previously approved, block if it's a high-severity threat
+                                    tracing::error!(
+                                        threat_level = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "High-severity security threat detected, blocking despite previous approval"
+                                    );
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(format!(
+                                                "[SECURITY WARNING] Message blocked due to high-severity threat: {}",
+                                                scan_result.explanation
+                                            ))
+                                        );
+                                    }));
+                                }
+                            }
+                            Ok(None) => {
+                                // Security scanning is disabled, continue normally
+                            }
+                            Err(e) => {
+                                let error_msg = e.to_string();
+                                if error_msg.contains("SECURITY_NOT_READY:") {
+                                    let user_message = error_msg.strip_prefix("SECURITY_NOT_READY: ")
+                                        .unwrap_or("🔒 Initialising Goose security models, this may take up to a minute. Please wait...")
+                                        .to_string();
+                                    
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(user_message)
+                                        );
+                                    }));
+                                } else {
+                                    tracing::warn!("Security scanning failed: {}", e);
+                                }
+                            }
+                        }
+                    } else if is_denied {
+                        tracing::info!(
+                            content_preview = %if combined_text.len() > 100 { 
+                                format!("{}...", &combined_text[..100]) 
+                            } else { 
+                                combined_text.clone() 
+                            },
+                            "Message was previously denied by user, blocking"
+                        );
+                        return Ok(Box::pin(async_stream::try_stream! {
+                            yield AgentEvent::Message(
+                                Message::assistant().with_text("This message was previously blocked due to security concerns.")
+                            );
+                        }));
+                    }
                     
                     // Skip scanning obviously safe messages to reduce false positives
                     let is_obviously_safe = Self::is_obviously_safe_message(&combined_text);
@@ -748,99 +833,118 @@ impl Agent {
                         let content = vec![Content::text(combined_text.clone())];
                         
                         tracing::info!(
-                            message_index = i,
-                            message_role = ?message.role,
-                            content_preview = %if combined_text.len() > 100 { 
-                                format!("{}...", &combined_text[..100]) 
-                            } else { 
-                                combined_text.clone() 
-                            },
-                            "Scanning user input message for security threats"
+                            "Scanning latest user input message for security threats"
                         );
                         
-                        if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
-                            if security_manager.should_ask_user(&scan_result) {
-                                tracing::warn!(
-                                    threat_level = ?scan_result.threat_level,
-                                    explanation = %scan_result.explanation,
-                                    "Security threat detected in user message, requesting user confirmation"
-                                );
-                                
-                                // Generate unique request ID
-                                let request_id = format!("sec_{}", nanoid::nanoid!(8));
-                                let threat_level_str = format!("{:?}", scan_result.threat_level);
-                                
-                                // Create tool confirmation request that looks like a security tool
-                                // This reuses the existing "Allow Tool" UI flow
-                                let security_message = Message::assistant()
-                                    .with_tool_confirmation_request(
-                                        request_id.clone(),
-                                        "security_scanner".to_string(),
-                                        serde_json::json!({
-                                            "threat_level": threat_level_str,
-                                            "explanation": scan_result.explanation,
-                                            "flagged_content": combined_text.clone()
-                                        }),
-                                        Some(format!(
-                                            "🚨 Security Alert: {} threat detected\n\n{}\n\nDo you want to proceed with this message?", 
-                                            threat_level_str, 
-                                            scan_result.explanation
-                                        )),
+                        match security_manager.scan_content(&content).await {
+                            Ok(Some(scan_result)) => {
+                                if security_manager.should_ask_user(&scan_result) {
+                                    tracing::warn!(
+                                        threat_level = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "Security threat detected in user message, requesting user confirmation"
                                     );
-                                
-                                // Return the security confirmation request (as tool confirmation)
-                                return Ok(Box::pin(async_stream::try_stream! {
-                                    yield AgentEvent::Message(security_message);
                                     
-                                    // Wait for user confirmation via the existing tool confirmation system
-                                    let mut confirmation_rx = self.confirmation_rx.lock().await;
-                                    if let Some((received_id, confirmation)) = confirmation_rx.recv().await {
-                                        if received_id == request_id {
-                                            match confirmation.permission {
-                                                crate::permission::Permission::AllowOnce |
-                                                crate::permission::Permission::AlwaysAllow => {
-                                                    tracing::info!("User approved potentially harmful message, proceeding");
-                                                    // Add message to approved cache to skip future scans
-                                                    let message_hash = Self::hash_message_content(&combined_text);
-                                                    let mut approved_messages = self.approved_security_messages.lock().await;
-                                                    approved_messages.insert(message_hash);
-                                                    drop(approved_messages);
-                                                    tracing::info!("Message hash added to approved cache");
-                                                    return;
-                                                },
-                                                crate::permission::Permission::DenyOnce |
-                                                crate::permission::Permission::Cancel => {
-                                                    tracing::info!("User denied potentially harmful message, blocking");
-                                                    // Add message to denied cache to skip future scans
-                                                    let message_hash = Self::hash_message_content(&combined_text);
-                                                    let mut denied_messages = self.denied_security_messages.lock().await;
-                                                    denied_messages.insert(message_hash);
-                                                    drop(denied_messages);
-                                                    tracing::info!("Message hash added to denied cache");
-                                                    yield AgentEvent::Message(
-                                                        Message::assistant().with_text("Message blocked by user request due to security concerns.")
-                                                    );
-                                                    return;
+                                    // Generate unique request ID
+                                    let request_id = format!("sec_{}", nanoid::nanoid!(8));
+                                    let threat_level_str = format!("{:?}", scan_result.threat_level);
+                                    
+                                    // Create tool confirmation request that looks like a security tool
+                                    // This reuses the existing "Allow Tool" UI flow
+                                    let security_message = Message::assistant()
+                                        .with_tool_confirmation_request(
+                                            request_id.clone(),
+                                            "security_scanner".to_string(),
+                                            serde_json::json!({
+                                                "threat_level": threat_level_str,
+                                                "explanation": scan_result.explanation,
+                                                "flagged_content": combined_text.clone()
+                                            }),
+                                            Some(format!(
+                                                "🚨 Security Alert: {} threat detected\n\n{}\n\nDo you want to proceed with this message?", 
+                                                threat_level_str, 
+                                                scan_result.explanation
+                                            )),
+                                        );
+                                    
+                                    // Return the security confirmation request (as tool confirmation)
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(security_message);
+                                        
+                                        // Wait for user confirmation via the existing tool confirmation system
+                                        let mut confirmation_rx = self.confirmation_rx.lock().await;
+                                        if let Some((received_id, confirmation)) = confirmation_rx.recv().await {
+                                            if received_id == request_id {
+                                                match confirmation.permission {
+                                                    crate::permission::Permission::AllowOnce |
+                                                    crate::permission::Permission::AlwaysAllow => {
+                                                        tracing::info!("User approved potentially harmful message, proceeding");
+                                                        // Add message to approved cache to skip future scans
+                                                        let message_hash = Self::hash_message_content(&combined_text);
+                                                        let mut approved_messages = self.approved_security_messages.lock().await;
+                                                        approved_messages.insert(message_hash);
+                                                        drop(approved_messages);
+                                                        tracing::info!("Message hash added to approved cache");
+                                                        return;
+                                                    },
+                                                    crate::permission::Permission::DenyOnce |
+                                                    crate::permission::Permission::Cancel => {
+                                                        tracing::info!("User denied potentially harmful message, blocking");
+                                                        // Add message to denied cache to skip future scans
+                                                        let message_hash = Self::hash_message_content(&combined_text);
+                                                        let mut denied_messages = self.denied_security_messages.lock().await;
+                                                        denied_messages.insert(message_hash);
+                                                        drop(denied_messages);
+                                                        tracing::info!("Message hash added to denied cache");
+                                                        yield AgentEvent::Message(
+                                                            Message::assistant().with_text("Message blocked by user request due to security concerns.")
+                                                        );
+                                                        return;
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                }));
-                            } else if security_manager.should_block(&scan_result) {
-                                tracing::error!(
-                                    threat_level = ?scan_result.threat_level,
-                                    explanation = %scan_result.explanation,
-                                    "Security threat detected in user message, blocking"
-                                );
-                                // Return error stream that blocks the message
-                                return Ok(Box::pin(async_stream::try_stream! {
-                                    yield AgentEvent::Message(
-                                        Message::assistant().with_text(format!(
-                                            "[SECURITY WARNING] Message blocked due to detected threat: {}",
-                                            scan_result.explanation
-                                        ))
+                                    }));
+                                } else if security_manager.should_block(&scan_result) {
+                                    tracing::error!(
+                                        threat_level = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "Security threat detected in user message, blocking"
                                     );
-                                }));
+                                    // Return error stream that blocks the message
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(format!(
+                                                "[SECURITY WARNING] Message blocked due to detected threat: {}",
+                                                scan_result.explanation
+                                            ))
+                                        );
+                                    }));
+                                }
+                            }
+                            Ok(None) => {
+                                // Security scanning is disabled, continue normally
+                            }
+                            Err(e) => {
+                                let error_msg = e.to_string();
+                                if error_msg.contains("SECURITY_NOT_READY:") {
+                                    // Extract the user-friendly message and clone it
+                                    let user_message = error_msg.strip_prefix("SECURITY_NOT_READY: ")
+                                        .unwrap_or("Initialising Goose, this may take up to a minute")
+                                        .to_string(); // Clone to owned string
+                                    
+                                    tracing::info!("Security system not ready, blocking user message: {}", user_message);
+                                    
+                                    // Return a message telling the user to wait
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(format!("🔒 {}", user_message))
+                                        );
+                                    }));
+                                } else {
+                                    // Other security errors should be logged but not block the user
+                                    tracing::warn!("Security scanning failed: {}", e);
+                                }
                             }
                         }
                     } else {
@@ -848,6 +952,7 @@ impl Agent {
                             content = %combined_text,
                             "Skipping security scan of obviously safe short message"
                         );
+                        // Continue - this message is safe
                     }
                 }
             }
