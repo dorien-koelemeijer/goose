@@ -99,7 +99,8 @@ mod onnx_scanners {
             let logits = outputs[0].try_extract::<f32>()?.view().to_owned();
 
             // Apply softmax to get probabilities
-            let logits_slice = logits.as_slice().unwrap();
+            let logits_slice = logits.as_slice()
+                .ok_or_else(|| anyhow::anyhow!("Failed to convert logits to slice"))?;
             let exp_sum: f32 = logits_slice.iter().map(|x| x.exp()).sum();
             let probabilities: Vec<f32> = logits_slice.iter().map(|x| x.exp() / exp_sum).collect();
 
@@ -268,7 +269,8 @@ mod onnx_scanners {
             let logits = outputs[0].try_extract::<f32>()?.view().to_owned();
 
             // Apply softmax to get probabilities
-            let logits_slice = logits.as_slice().unwrap();
+            let logits_slice = logits.as_slice()
+                .ok_or_else(|| anyhow::anyhow!("Failed to convert logits to slice"))?;
             let exp_sum: f32 = logits_slice.iter().map(|x| x.exp()).sum();
             let probabilities: Vec<f32> = logits_slice.iter().map(|x| x.exp() / exp_sum).collect();
 

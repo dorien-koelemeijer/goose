@@ -137,7 +137,8 @@ impl ModelDownloader {
         fs::create_dir_all(venv_dir).await?;
         
         let output = Command::new("python3")
-            .args(&["-m", "venv", venv_dir.to_str().unwrap()])
+            .args(&["-m", "venv", venv_dir.to_str()
+                .ok_or_else(|| anyhow!("Invalid venv directory path"))?])
             .output()
             .map_err(|e| anyhow!("Failed to create Python virtual environment: {}", e))?;
 

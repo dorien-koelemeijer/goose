@@ -674,7 +674,7 @@ function ChatContent({
           )}
 
           <div className="relative p-4 pt-0 z-10 animate-[fadein_400ms_ease-in_forwards]">
-            {isLoading && <LoadingGoose />}
+            {isLoading && <LoadingGoose messages={messages} />}
             <ChatInput
               handleSubmit={handleSubmit}
               isLoading={isLoading}

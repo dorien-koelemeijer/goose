@@ -279,7 +279,8 @@ impl SecurityManager {
             "Starting security scan of content"
         );
         
-        let scanner = self.scanner.as_ref().unwrap();
+        let scanner = self.scanner.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Security scanner not initialized"))?;
         
         // Handle the case where security models aren't ready yet
         match scanner.scan_content(content).await {
@@ -344,7 +345,8 @@ impl SecurityManager {
         }
 
         tracing::info!(tool = tool_name, "Starting security scan of tool result");
-        let scanner = self.scanner.as_ref().unwrap();
+        let scanner = self.scanner.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Security scanner not initialized"))?;
         let scan_result = scanner
             .scan_tool_result(tool_name, arguments, result)
             .await?;
@@ -481,7 +483,11 @@ impl SecurityManager {
                 "Security scanner: sanitizing content due to detected threat: {}",
                 scan_result.explanation
             );
-            return scan_result.sanitized_content.clone().unwrap();
+            return scan_result.sanitized_content.clone()
+                .unwrap_or_else(|| {
+                    tracing::warn!("Sanitized content not available, falling back to original");
+                    original.to_vec()
+                });
         }
 
         if self.should_block(scan_result) {
