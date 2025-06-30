@@ -950,6 +950,41 @@ impl Agent {
                     }
                 }
             }
+            
+            // Filter out denied messages from conversation history before processing
+            let denied_messages = self.denied_security_messages.lock().await;
+            let original_message_count = messages.len();
+            messages.retain(|message| {
+                if message.role == Role::User {
+                    // Check if this user message was denied
+                    let text_contents: Vec<String> = message.content.iter()
+                        .filter_map(|c| c.as_text().map(String::from))
+                        .collect();
+                    if !text_contents.is_empty() {
+                        let combined_text = text_contents.join("\n");
+                        let message_hash = Self::hash_message_content(&combined_text);
+                        let is_denied = denied_messages.contains(&message_hash);
+                        if is_denied {
+                            tracing::info!(
+                                content_preview = %if combined_text.len() > 100 { 
+                                    format!("{}...", &combined_text[..100]) 
+                                } else { 
+                                    combined_text.clone() 
+                                },
+                                "Filtering out denied message from conversation history"
+                            );
+                            return false; // Remove this message
+                        }
+                    }
+                }
+                true // Keep this message
+            });
+            drop(denied_messages);
+            
+            if messages.len() != original_message_count {
+                tracing::info!("Filtered out {} denied messages from conversation history", 
+                    original_message_count - messages.len());
+            }
         }
 
         // Load settings from config
