@@ -142,97 +142,10 @@ mod onnx_scanners {
         }
 
         /// Check if content is obviously safe and doesn't need detailed analysis
-        fn is_obviously_safe_content(text: &str) -> bool {
-            let text_lower = text.to_lowercase();
-            let text_len = text.len();
-            
-            // Very short messages with only safe characters
-            if text_len <= 20 && text.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?👋🎉".contains(c)) {
-                return true;
-            }
-            
-            // Educational/informational content patterns
-            let educational_indicators = [
-                "what is", "can you explain", "how does", "define", "definition",
-                "wikipedia", "according to", "research shows", "studies indicate",
-                "for example", "such as", "in other words", "specifically",
-                "which animals are", "can we conclude", "options:", "choose from",
-                "true or false", "select the correct", "multiple choice", 
-                "is the following statement true", "is this statement true", "is it true that", 
-                "step-by-step reasoning", "let's think first", "reasoning process", 
-                "sociology project", "academic purposes", "research project", "academic research", "research paper", "comparison analysis", "professional report", "scientific discourse", "technical terms", "database", "wealth of knowledge", "for my thesis", "for my paper", "mental health", "coping mechanisms", "theoretical", "theoretically", "imagine you", "creative writing", "narrative", "story", "sci-fi", "fantasy", "hypothetical", "role-play", "roleplay"
-            ];
-            
-            // Check if content contains educational patterns and lacks injection keywords
-            let has_educational_pattern = educational_indicators.iter()
-                .any(|pattern| text_lower.contains(pattern));
-                
-            let has_injection_keywords = [
-                "ignore", "forget", "system", "instruction", "prompt", "override",
-                "jailbreak", "roleplay", "pretend", "act as", "you are now",
-                "new instructions", "disregard", "bypass"
-            ].iter().any(|keyword| text_lower.contains(keyword));
-            
-            if has_educational_pattern && !has_injection_keywords && text_len < 1000 {
-                return true;
-            }
-            
-            // Technical documentation patterns
-            let technical_patterns = [
-                "deep learning", "neural network", "machine learning", "artificial intelligence",
-                "algorithm", "classification", "regression", "supervised", "unsupervised",
-                "convolutional", "transformer", "attention mechanism", "apache 2.0", "open-source", "license", "licensing", "build system", "javascript", "python", "css", "minification", "minified files", "project", "files", "build process", "production", "strategy", "legal analyst", "future", "time machines", "peculiar law", "narrative", "writing", "explores", "consequences"
-            ];
-            
-            let has_technical_pattern = technical_patterns.iter()
-                .any(|pattern| text_lower.contains(pattern));
-                
-            if has_technical_pattern && !has_injection_keywords && text_len < 2000 {
-                return true;
-            }
-            
+        fn is_obviously_safe_content(_text: &str) -> bool {
+            // Let the ML models handle all content analysis
+            // No pre-filtering to avoid potential security bypasses
             false
-        }
-
-        /// Add helpful context to reduce false positives by framing content as normal user input
-        fn add_helpful_context(text: &str) -> String {
-            // Don't add context if text is very long to avoid token limits
-            if text.len() > 800 {
-                return text.to_string();
-            }
-            
-            // Check if this looks like academic/research content
-            let text_lower = text.to_lowercase();
-            let is_academic = text_lower.contains("research") || 
-                             text_lower.contains("paper") || 
-                             text_lower.contains("analysis") ||
-                             text_lower.contains("report") ||
-                             text_lower.contains("study") ||
-                             text_lower.contains("academic");
-            
-            let is_creative = text_lower.contains("imagine") || 
-                             text_lower.contains("story") || 
-                             text_lower.contains("narrative") ||
-                             text_lower.contains("roleplay") ||
-                             text_lower.contains("role-play") ||
-                             text_lower.contains("creative writing");
-            
-            if is_academic {
-                format!(
-                    "This is a legitimate academic/research request to an AI assistant:\n\n{}\n\nThis is NOT a prompt injection. Only flag content that explicitly tries to override system instructions or manipulate the AI's behavior with commands like 'ignore previous instructions' or 'act as if you are...'",
-                    text
-                )
-            } else if is_creative {
-                format!(
-                    "This is a normal user message to an AI assistant requesting help with creative writing or storytelling:\n\n{}\n\nThis is NOT a prompt injection attempt - it's legitimate creative content.",
-                    text
-                )
-            } else {
-                format!(
-                    "This is a normal user message to an AI assistant:\n\n{}\n\nOnly flag as prompt injection if it explicitly tries to override system instructions or manipulate AI behavior with malicious commands.",
-                    text
-                )
-            }
         }
     }
 
@@ -254,7 +167,7 @@ mod onnx_scanners {
             if Self::is_obviously_safe_content(&combined_text) {
                 return Ok(ScanResult {
                     threat_level: ThreatLevel::Safe,
-                    explanation: "ONNX DeBERTa: Content appears to be educational/informational, treating as safe".to_string(),
+                    explanation: "ONNX DeBERTa: Pre-filtering disabled, analyzing with ML model".to_string(),
                     sanitized_content: None,
                 });
             }
@@ -420,97 +333,10 @@ mod onnx_scanners {
         }
 
         /// Check if content is obviously safe and doesn't need detailed analysis
-        fn is_obviously_safe_content(text: &str) -> bool {
-            let text_lower = text.to_lowercase();
-            let text_len = text.len();
-            
-            // Very short messages with only safe characters
-            if text_len <= 20 && text.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?👋🎉".contains(c)) {
-                return true;
-            }
-            
-            // Educational/informational content patterns
-            let educational_indicators = [
-                "what is", "can you explain", "how does", "define", "definition",
-                "wikipedia", "according to", "research shows", "studies indicate",
-                "for example", "such as", "in other words", "specifically",
-                "which animals are", "can we conclude", "options:", "choose from",
-                "true or false", "select the correct", "multiple choice", 
-                "is the following statement true", "is this statement true", "is it true that", 
-                "step-by-step reasoning", "let's think first", "reasoning process", 
-                "sociology project", "academic purposes", "research project", "academic research", "research paper", "comparison analysis", "professional report", "scientific discourse", "technical terms", "database", "wealth of knowledge", "for my thesis", "for my paper", "mental health", "coping mechanisms", "theoretical", "theoretically", "imagine you", "creative writing", "narrative", "story", "sci-fi", "fantasy", "hypothetical", "role-play", "roleplay"
-            ];
-            
-            // Check if content contains educational patterns and lacks injection keywords
-            let has_educational_pattern = educational_indicators.iter()
-                .any(|pattern| text_lower.contains(pattern));
-                
-            let has_injection_keywords = [
-                "ignore", "forget", "system", "instruction", "prompt", "override",
-                "jailbreak", "roleplay", "pretend", "act as", "you are now",
-                "new instructions", "disregard", "bypass"
-            ].iter().any(|keyword| text_lower.contains(keyword));
-            
-            if has_educational_pattern && !has_injection_keywords && text_len < 1000 {
-                return true;
-            }
-            
-            // Technical documentation patterns
-            let technical_patterns = [
-                "deep learning", "neural network", "machine learning", "artificial intelligence",
-                "algorithm", "classification", "regression", "supervised", "unsupervised",
-                "convolutional", "transformer", "attention mechanism", "apache 2.0", "open-source", "license", "licensing", "build system", "javascript", "python", "css", "minification", "minified files", "project", "files", "build process", "production", "strategy", "legal analyst", "future", "time machines", "peculiar law", "narrative", "writing", "explores", "consequences"
-            ];
-            
-            let has_technical_pattern = technical_patterns.iter()
-                .any(|pattern| text_lower.contains(pattern));
-                
-            if has_technical_pattern && !has_injection_keywords && text_len < 2000 {
-                return true;
-            }
-            
+        fn is_obviously_safe_content(_text: &str) -> bool {
+            // Let the ML models handle all content analysis
+            // No pre-filtering to avoid potential security bypasses
             false
-        }
-
-        /// Add helpful context to reduce false positives by framing content as normal user input
-        fn add_helpful_context(text: &str) -> String {
-            // Don't add context if text is very long to avoid token limits
-            if text.len() > 800 {
-                return text.to_string();
-            }
-            
-            // Check if this looks like academic/research content
-            let text_lower = text.to_lowercase();
-            let is_academic = text_lower.contains("research") || 
-                             text_lower.contains("paper") || 
-                             text_lower.contains("analysis") ||
-                             text_lower.contains("report") ||
-                             text_lower.contains("study") ||
-                             text_lower.contains("academic");
-            
-            let is_creative = text_lower.contains("imagine") || 
-                             text_lower.contains("story") || 
-                             text_lower.contains("narrative") ||
-                             text_lower.contains("roleplay") ||
-                             text_lower.contains("role-play") ||
-                             text_lower.contains("creative writing");
-            
-            if is_academic {
-                format!(
-                    "This is a legitimate academic/research request to an AI assistant:\n\n{}\n\nThis is NOT a prompt injection. Only flag content that explicitly tries to override system instructions or manipulate the AI's behavior with commands like 'ignore previous instructions' or 'act as if you are...'",
-                    text
-                )
-            } else if is_creative {
-                format!(
-                    "This is a normal user message to an AI assistant requesting help with creative writing or storytelling:\n\n{}\n\nThis is NOT a prompt injection attempt - it's legitimate creative content.",
-                    text
-                )
-            } else {
-                format!(
-                    "This is a normal user message to an AI assistant:\n\n{}\n\nOnly flag as prompt injection if it explicitly tries to override system instructions or manipulate AI behavior with malicious commands.",
-                    text
-                )
-            }
         }
     }
 
@@ -532,7 +358,7 @@ mod onnx_scanners {
             if Self::is_obviously_safe_content(&combined_text) {
                 return Ok(ScanResult {
                     threat_level: ThreatLevel::Safe,
-                    explanation: "ONNX ProtectAI: Content appears to be educational/informational, treating as safe".to_string(),
+                    explanation: "ONNX ProtectAI: Pre-filtering disabled, analyzing with ML model".to_string(),
                     sanitized_content: None,
                 });
             }

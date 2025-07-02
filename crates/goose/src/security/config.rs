@@ -75,34 +75,18 @@ pub enum ThreatThreshold {
     Critical, // Only critical threats
 }
 
-impl Default for SecurityConfig {
-    fn default() -> Self {
+impl SecurityConfig {
+    /// Create a disabled security configuration
+    pub fn disabled() -> Self {
         Self {
             enabled: false,
-            scanner_type: ScannerType::ParallelEnsemble, // Use the ensemble with fixed race condition
+            scanner_type: ScannerType::None,
             ollama_endpoint: "http://localhost:11434".to_string(),
-            action_policy: ActionPolicy::AskUser, // Ask user for confirmation by default
+            action_policy: ActionPolicy::LogOnly,
             scan_threshold: ThreatThreshold::Medium,
-            confidence_threshold: 0.5, // Default to 50% confidence - more sensitive
-            ensemble_config: Some(EnsembleConfig {
-                voting_strategy: VotingStrategy::WeightedVote, // Use weighted voting since ProtectAI has more weight
-                member_configs: vec![
-                    EnsembleMember {
-                        scanner_type: ScannerType::RustDeepsetDeberta,
-                        confidence_threshold: 0.5, // Lower threshold - 50%
-                        weight: 0.3, // Lower weight for Deepset
-                    },
-                    EnsembleMember {
-                        scanner_type: ScannerType::RustProtectAiDeberta,
-                        confidence_threshold: 0.6, // Moderate threshold for ProtectAI - 60%
-                        weight: 0.7, // Higher weight for ProtectAI
-                    },
-                ],
-                max_scan_time_ms: Some(800),     // 800ms timeout
-                min_models_required: Some(1),    // At least one model must respond
-                early_exit_threshold: Some(0.8), // Lower early exit threshold
-            }),
-            hybrid_config: None, // No hybrid by default
+            confidence_threshold: 0.7,
+            ensemble_config: None,
+            hybrid_config: None,
         }
     }
 }
