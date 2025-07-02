@@ -180,7 +180,7 @@ impl ModelDownloader {
         Ok(())
     }
 
-    async fn create_conversion_script(&self, _model_info: &ModelInfo) -> Result<PathBuf> {
+    async fn create_conversion_script(&self, model_info: &ModelInfo) -> Result<PathBuf> {
         let script_content = format!(
             r#"#!/usr/bin/env python3
 """
@@ -277,7 +277,8 @@ if __name__ == "__main__":
 "#
         );
 
-        let script_path = self.cache_dir.join("convert_model.py");
+        let script_path = self.cache_dir.join(format!("convert_model_{}.py", 
+            model_info.hf_model_name.replace("/", "_").replace("-", "_")));
         fs::write(&script_path, script_content).await?;
         
         // Make the script executable

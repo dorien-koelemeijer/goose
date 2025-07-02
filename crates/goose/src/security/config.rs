@@ -79,28 +79,28 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            scanner_type: ScannerType::ParallelEnsemble, // Use the best performing ensemble
+            scanner_type: ScannerType::ParallelEnsemble, // Use the ensemble with fixed race condition
             ollama_endpoint: "http://localhost:11434".to_string(),
             action_policy: ActionPolicy::AskUser, // Ask user for confirmation by default
             scan_threshold: ThreatThreshold::Medium,
-            confidence_threshold: 0.7, // Default to 70% confidence to reduce false positives
+            confidence_threshold: 0.5, // Default to 50% confidence - more sensitive
             ensemble_config: Some(EnsembleConfig {
-                voting_strategy: VotingStrategy::MajorityVote, // Require majority to agree (reduces false positives)
+                voting_strategy: VotingStrategy::WeightedVote, // Use weighted voting since ProtectAI has more weight
                 member_configs: vec![
                     EnsembleMember {
                         scanner_type: ScannerType::RustDeepsetDeberta,
-                        confidence_threshold: 0.95, // Higher threshold for Deepset to reduce false positives
-                        weight: 1.0,
+                        confidence_threshold: 0.5, // Lower threshold - 50%
+                        weight: 0.3, // Lower weight for Deepset
                     },
                     EnsembleMember {
                         scanner_type: ScannerType::RustProtectAiDeberta,
-                        confidence_threshold: 0.7,
-                        weight: 1.0,
+                        confidence_threshold: 0.6, // Moderate threshold for ProtectAI - 60%
+                        weight: 0.7, // Higher weight for ProtectAI
                     },
                 ],
                 max_scan_time_ms: Some(800),     // 800ms timeout
                 min_models_required: Some(1),    // At least one model must respond
-                early_exit_threshold: Some(0.9), // If one model is very confident, exit early
+                early_exit_threshold: Some(0.8), // Lower early exit threshold
             }),
             hybrid_config: None, // No hybrid by default
         }
