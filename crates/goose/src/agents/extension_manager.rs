@@ -114,6 +114,15 @@ impl ExtensionManager {
     /// Add a new MCP extension based on the provided client type
     // TODO IMPORTANT need to ensure this times out if the extension command is broken!
     pub async fn add_extension(&mut self, config: ExtensionConfig) -> ExtensionResult<()> {
+        self.add_extension_with_security(config, None).await
+    }
+
+    /// Add a new MCP extension with optional security scanning
+    pub async fn add_extension_with_security(
+        &mut self, 
+        config: ExtensionConfig,
+        security_manager: Option<&crate::security::SecurityManager>
+    ) -> ExtensionResult<()> {
         let config_name = config.key().to_string();
         let sanitized_name = normalize(config_name.clone());
 
@@ -271,6 +280,42 @@ impl ExtensionManager {
         self.clients
             .insert(sanitized_name.clone(), Arc::new(Mutex::new(client)));
 
+        // Security scanning: scan the newly added extension's tools immediately
+        if let Some(security_manager) = security_manager {
+            tracing::info!(
+                extension_name = %sanitized_name,
+                "Starting immediate security scan of newly added extension tools"
+            );
+            
+            // Scan only this extension's tools
+            match self.get_prefixed_tools_with_security(Some(sanitized_name.clone()), Some(security_manager)).await {
+                Ok(safe_tools) => {
+                    tracing::info!(
+                        extension_name = %sanitized_name,
+                        tool_count = safe_tools.len(),
+                        "Extension security scan completed successfully"
+                    );
+                    // Tools are already filtered by security scanning in get_prefixed_tools_with_security
+                    // If any tools were blocked, they won't be in safe_tools
+                }
+                Err(e) => {
+                    tracing::error!(
+                        extension_name = %sanitized_name,
+                        error = %e,
+                        "Security threat detected in extension, removing extension"
+                    );
+                    
+                    // Remove the extension that was just added due to security threat
+                    self.clients.remove(&sanitized_name);
+                    self.instructions.remove(&sanitized_name);
+                    self.resource_capable_extensions.remove(&sanitized_name);
+                    
+                    // Return the security error to prevent extension from being enabled
+                    return Err(e);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -337,6 +382,16 @@ impl ExtensionManager {
         &self,
         extension_name: Option<String>,
     ) -> ExtensionResult<Vec<Tool>> {
+        self.get_prefixed_tools_with_security(extension_name, None).await
+    }
+
+    /// Get all tools from all clients with proper prefixing
+    /// Optionally includes security scanning of MCP tool definitions
+    pub async fn get_prefixed_tools_with_security(
+        &self,
+        extension_name: Option<String>,
+        security_manager: Option<&crate::security::SecurityManager>,
+    ) -> ExtensionResult<Vec<Tool>> {
         // Filter clients based on the provided extension_name or include all if None
         let filtered_clients = self.clients.iter().filter(|(name, _)| {
             if let Some(ref name_filter) = extension_name {
@@ -390,7 +445,80 @@ impl ExtensionManager {
             }
         }
 
-        Ok(tools)
+        // Security scanning: scan MCP tool definitions for malicious content
+        if let Some(security_manager) = security_manager {
+            let mut safe_tools = Vec::new();
+            
+            for tool in tools {
+                // Create tool information string for scanning
+                let tool_info = format!(
+                    "Tool Name: {}\nDescription: {}\nParameters: {}",
+                    tool.name,
+                    tool.description,
+                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                );
+                
+                tracing::info!(
+                    tool_name = %tool.name,
+                    tool_info_length = tool_info.len(),
+                    "Starting security scan of MCP tool definition"
+                );
+                
+                match security_manager.scan_content(&[mcp_core::Content::text(tool_info)]).await {
+                    Ok(Some(scan_result)) => {
+                        if security_manager.should_block(&scan_result) {
+                            tracing::error!(
+                                tool_name = %tool.name,
+                                threat_level = ?scan_result.threat_level,
+                                explanation = %scan_result.explanation,
+                                "🚨 SECURITY: Blocking malicious MCP tool"
+                            );
+                            // Skip this tool - don't add it to safe_tools
+                            continue;
+                        } else if security_manager.should_ask_user(&scan_result) {
+                            tracing::warn!(
+                                tool_name = %tool.name,
+                                threat_level = ?scan_result.threat_level,
+                                explanation = %scan_result.explanation,
+                                "⚠️ SECURITY: Suspicious MCP tool detected - returning error to trigger user confirmation"
+                            );
+                            // Return an error that will be handled by the agent to show user confirmation
+                            // The agent can catch this specific error and show a confirmation UI
+                            return Err(ExtensionError::SecurityThreat {
+                                tool_name: tool.name.clone(),
+                                threat_level: format!("{:?}", scan_result.threat_level),
+                                explanation: scan_result.explanation.clone(),
+                            });
+                        } else {
+                            tracing::info!(
+                                tool_name = %tool.name,
+                                "MCP tool scan result: Safe"
+                            );
+                            // Tool is safe or below threshold
+                            safe_tools.push(tool);
+                        }
+                    }
+                    Ok(None) => {
+                        // Security scanning disabled, include all tools
+                        safe_tools.push(tool);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            tool_name = %tool.name,
+                            error = %e,
+                            "Failed to scan MCP tool for security threats, allowing tool"
+                        );
+                        // On scan error, allow the tool to avoid breaking functionality
+                        safe_tools.push(tool);
+                    }
+                }
+            }
+            
+            Ok(safe_tools)
+        } else {
+            // No security manager provided, return all tools
+            Ok(tools)
+        }
     }
 
     /// Get client resources and their contents

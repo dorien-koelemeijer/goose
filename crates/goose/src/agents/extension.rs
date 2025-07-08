@@ -28,6 +28,12 @@ pub enum ExtensionError {
     SetupError(String),
     #[error("Join error occurred during task execution: {0}")]
     TaskJoinError(#[from] tokio::task::JoinError),
+    #[error("Security threat detected in MCP tool '{tool_name}': {explanation} (Threat level: {threat_level})")]
+    SecurityThreat {
+        tool_name: String,
+        threat_level: String,
+        explanation: String,
+    },
 }
 
 pub type ExtensionResult<T> = Result<T, ExtensionError>;

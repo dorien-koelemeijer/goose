@@ -239,15 +239,20 @@ impl Agent {
     }
 
     /// Get all tools from all clients with proper prefixing
+    /// Includes security scanning of MCP tool definitions
     pub async fn get_prefixed_tools(&self) -> ExtensionResult<Vec<Tool>> {
+        let security_manager = self.security_manager.lock().await;
+        let security_manager_ref = security_manager.as_ref();
+        
         let mut tools = self
             .extension_manager
             .lock()
             .await
-            .get_prefixed_tools(None)
+            .get_prefixed_tools_with_security(None, security_manager_ref)
             .await?;
 
         // Add frontend tools directly - they don't need prefixing since they're already uniquely named
+        // Frontend tools are trusted and don't need security scanning
         let frontend_tools = self.frontend_tools.lock().await;
         for frontend_tool in frontend_tools.values() {
             tools.push(frontend_tool.tool.clone());
@@ -456,8 +461,10 @@ impl Agent {
             }
         };
 
+        let security_manager = self.security_manager.lock().await;
+        let security_manager_ref = security_manager.as_ref();
         let result = extension_manager
-            .add_extension(config)
+            .add_extension_with_security(config, security_manager_ref)
             .await
             .map(|_| {
                 vec![Content::text(format!(
@@ -465,7 +472,26 @@ impl Agent {
                     extension_name
                 ))]
             })
-            .map_err(|e| ToolError::ExecutionError(e.to_string()));
+            .map_err(|e| {
+                // Handle security threats specially - they need user confirmation
+                if let ExtensionError::SecurityThreat { tool_name, threat_level, explanation } = &e {
+                    tracing::warn!(
+                        extension_name = %extension_name,
+                        tool_name = %tool_name,
+                        threat_level = %threat_level,
+                        explanation = %explanation,
+                        "Security threat detected in extension, user confirmation needed"
+                    );
+                    // For now, return a descriptive error message
+                    // TODO: Implement proper user confirmation flow for extension security threats
+                    ToolError::ExecutionError(format!(
+                        "🚨 Security Alert: Extension '{}' contains a suspicious tool '{}' with {} threat level.\n\n{}\n\nExtension installation blocked for security reasons.",
+                        extension_name, tool_name, threat_level, explanation
+                    ))
+                } else {
+                    ToolError::ExecutionError(e.to_string())
+                }
+            });
 
         (request_id, result)
     }
@@ -499,8 +525,30 @@ impl Agent {
                 }
             }
             _ => {
+                let security_manager = self.security_manager.lock().await;
+                let security_manager_ref = security_manager.as_ref();
                 let mut extension_manager = self.extension_manager.lock().await;
-                extension_manager.add_extension(extension.clone()).await?;
+                
+                // Handle security threats from extension scanning
+                match extension_manager.add_extension_with_security(extension.clone(), security_manager_ref).await {
+                    Ok(_) => {
+                        // Extension added successfully
+                    }
+                    Err(ExtensionError::SecurityThreat { tool_name, threat_level, explanation }) => {
+                        tracing::warn!(
+                            extension_name = %extension.name(),
+                            tool_name = %tool_name,
+                            threat_level = %threat_level,
+                            explanation = %explanation,
+                            "Security threat detected in extension during add_extension"
+                        );
+                        // For now, return the security error - in the future this could trigger a confirmation UI
+                        return Err(ExtensionError::SecurityThreat { tool_name, threat_level, explanation });
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
             }
         }
 
@@ -531,9 +579,12 @@ impl Agent {
     }
 
     pub async fn list_tools(&self, extension_name: Option<String>) -> Vec<Tool> {
+        let security_manager = self.security_manager.lock().await;
+        let security_manager_ref = security_manager.as_ref();
+        
         let extension_manager = self.extension_manager.lock().await;
         let mut prefixed_tools = extension_manager
-            .get_prefixed_tools(extension_name.clone())
+            .get_prefixed_tools_with_security(extension_name.clone(), security_manager_ref)
             .await
             .unwrap_or_default();
 
@@ -581,11 +632,14 @@ impl Agent {
         let selector = self.router_tool_selector.lock().await.clone();
         if let Some(selector) = selector {
             if let Ok(recent_calls) = selector.get_recent_tool_calls(20).await {
+                let security_manager = self.security_manager.lock().await;
+                let security_manager_ref = security_manager.as_ref();
+                
                 let extension_manager = self.extension_manager.lock().await;
                 // Add recent tool calls to the list, avoiding duplicates
                 for tool_name in recent_calls {
                     // Find the tool in the extension manager's tools
-                    if let Ok(extension_tools) = extension_manager.get_prefixed_tools(None).await {
+                    if let Ok(extension_tools) = extension_manager.get_prefixed_tools_with_security(None, security_manager_ref).await {
                         if let Some(tool) = extension_tools.iter().find(|t| t.name == tool_name) {
                             // Only add if not already in prefixed_tools
                             if !prefixed_tools.iter().any(|t| t.name == tool.name) {
@@ -638,9 +692,11 @@ impl Agent {
     ) {
         tracing::info!("handle_confirmation called with request_id: {}, permission: {:?}", request_id, confirmation.permission);
         
-        // Check if this is a security scanner confirmation
-        if request_id.starts_with("sec_") {
-            tracing::info!("Processing security confirmation for request_id: {}", request_id);
+        // Check if this is a security scanner confirmation (user messages or tool results)
+        if request_id.starts_with("sec_") || request_id.starts_with("tool_sec_") {
+            let is_tool_result = request_id.starts_with("tool_sec_");
+            tracing::info!("Processing {} security confirmation for request_id: {}", 
+                if is_tool_result { "tool result" } else { "user message" }, request_id);
             
             // Get the flagged content from pending requests
             let flagged_content = {
@@ -651,25 +707,44 @@ impl Agent {
             };
             
             if let Some(content) = flagged_content {
-                let message_hash = Self::hash_message_content(&content);
-                tracing::info!("Generated hash for content: {}", message_hash);
-                
-                match confirmation.permission {
-                    crate::permission::Permission::AllowOnce |
-                    crate::permission::Permission::AlwaysAllow => {
-                        tracing::info!("User approved security-flagged message, adding to approved cache");
-                        let mut approved_messages = self.approved_security_messages.lock().await;
-                        approved_messages.insert(message_hash.clone());
-                        drop(approved_messages);
-                        tracing::info!("Message hash {} added to approved cache for request_id: {}", message_hash, request_id);
-                    },
-                    crate::permission::Permission::DenyOnce |
-                    crate::permission::Permission::Cancel => {
-                        tracing::info!("User denied security-flagged message, adding to denied cache");
-                        let mut denied_messages = self.denied_security_messages.lock().await;
-                        denied_messages.insert(message_hash.clone());
-                        drop(denied_messages);
-                        tracing::info!("Message hash {} added to denied cache for request_id: {}", message_hash, request_id);
+                if is_tool_result {
+                    // For tool results, we handle the confirmation differently
+                    // The content is serialized JSON of the tool result
+                    match confirmation.permission {
+                        crate::permission::Permission::AllowOnce |
+                        crate::permission::Permission::AlwaysAllow => {
+                            tracing::info!("User approved security-flagged tool result, content will be shown");
+                            // TODO: We could store approved tool result patterns for future reference
+                            // For now, the tool result will be processed normally when user re-runs the tool
+                        },
+                        crate::permission::Permission::DenyOnce |
+                        crate::permission::Permission::Cancel => {
+                            tracing::info!("User denied security-flagged tool result, content will be blocked");
+                            // TODO: We could store denied tool result patterns for future reference
+                        }
+                    }
+                } else {
+                    // For user messages, use the existing hash-based caching
+                    let message_hash = Self::hash_message_content(&content);
+                    tracing::info!("Generated hash for content: {}", message_hash);
+                    
+                    match confirmation.permission {
+                        crate::permission::Permission::AllowOnce |
+                        crate::permission::Permission::AlwaysAllow => {
+                            tracing::info!("User approved security-flagged message, adding to approved cache");
+                            let mut approved_messages = self.approved_security_messages.lock().await;
+                            approved_messages.insert(message_hash.clone());
+                            drop(approved_messages);
+                            tracing::info!("Message hash {} added to approved cache for request_id: {}", message_hash, request_id);
+                        },
+                        crate::permission::Permission::DenyOnce |
+                        crate::permission::Permission::Cancel => {
+                            tracing::info!("User denied security-flagged message, adding to denied cache");
+                            let mut denied_messages = self.denied_security_messages.lock().await;
+                            denied_messages.insert(message_hash.clone());
+                            drop(denied_messages);
+                            tracing::info!("Message hash {} added to denied cache for request_id: {}", message_hash, request_id);
+                        }
                     }
                 }
             } else {
@@ -1226,10 +1301,51 @@ impl Agent {
                                                         tracing::warn!(
                                                             threat_level = ?scan_result.threat_level,
                                                             explanation = %scan_result.explanation,
-                                                            "Security threat detected in tool result, would ask user for confirmation"
+                                                            "Security threat detected in tool result, requesting user confirmation"
                                                         );
-                                                        // TODO: Implement security confirmation request to UI for tool results
-                                                        output
+                                                        
+                                                        // Generate unique request ID for tool result security confirmation
+                                                        let security_request_id = format!("tool_sec_{}", nanoid::nanoid!(8));
+                                                        let threat_level_str = format!("{:?}", scan_result.threat_level);
+                                                        
+                                                        // Store the original tool result for later processing
+                                                        let tool_result_content = serde_json::to_string(content)
+                                                            .unwrap_or_else(|_| "Failed to serialize tool result".to_string());
+                                                        {
+                                                            let mut pending_requests = self.pending_security_requests.lock().await;
+                                                            pending_requests.insert(security_request_id.clone(), tool_result_content);
+                                                        }
+                                                        
+                                                        // Create a security confirmation message for the tool result
+                                                        // This will be yielded as a separate message to show the confirmation UI
+                                                        let security_confirmation_message = Message::assistant()
+                                                            .with_tool_confirmation_request(
+                                                                security_request_id.clone(),
+                                                                "tool_result_security_scanner".to_string(),
+                                                                serde_json::json!({
+                                                                    "threat_level": threat_level_str,
+                                                                    "explanation": scan_result.explanation,
+                                                                    "tool_request_id": request_id,
+                                                                    "scan_type": "tool_result"
+                                                                }),
+                                                                Some(format!(
+                                                                    "🚨 Security Alert: Tool result contains {} threat\n\n{}\n\nThe tool execution completed, but its output contains potentially malicious content. Do you want to view this result?", 
+                                                                    threat_level_str, 
+                                                                    scan_result.explanation
+                                                                )),
+                                                            );
+                                                        
+                                                        // Yield the security confirmation message immediately
+                                                        // This will show the confirmation UI to the user
+                                                        yield AgentEvent::Message(security_confirmation_message);
+                                                        
+                                                        // For now, return a placeholder message indicating the result is pending confirmation
+                                                        // The actual result will be processed when the user confirms
+                                                        Ok(vec![Content::text(format!(
+                                                            "[SECURITY] Tool result pending user confirmation due to detected {} threat: {}",
+                                                            threat_level_str,
+                                                            scan_result.explanation
+                                                        ))])
                                                     } else if security_manager.should_block(&scan_result) {
                                                         tracing::error!(
                                                             threat_level = ?scan_result.threat_level,
@@ -1415,8 +1531,11 @@ impl Agent {
     }
 
     pub async fn get_plan_prompt(&self) -> anyhow::Result<String> {
+        let security_manager = self.security_manager.lock().await;
+        let security_manager_ref = security_manager.as_ref();
+        
         let extension_manager = self.extension_manager.lock().await;
-        let tools = extension_manager.get_prefixed_tools(None).await?;
+        let tools = extension_manager.get_prefixed_tools_with_security(None, security_manager_ref).await?;
         let tools_info = tools
             .into_iter()
             .map(|tool| {
