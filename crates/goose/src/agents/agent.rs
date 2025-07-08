@@ -12,7 +12,7 @@ use mcp_core::protocol::JsonRpcMessage;
 
 use crate::agents::sub_recipe_manager::SubRecipeManager;
 use crate::config::{Config, ExtensionConfigManager, PermissionManager};
-use crate::message::Message;
+use crate::message::{Message, MessageContent};
 use mcp_core::role::Role;
 use crate::permission::permission_judge::check_tool_permissions;
 use crate::permission::{PermissionConfirmation, SecurityConfirmation};
@@ -241,14 +241,16 @@ impl Agent {
     /// Get all tools from all clients with proper prefixing
     /// Includes security scanning of MCP tool definitions
     pub async fn get_prefixed_tools(&self) -> ExtensionResult<Vec<Tool>> {
+        // For already-enabled extensions, don't re-scan them - just get the tools
+        // Security scanning only happens when extensions are first added
         let security_manager = self.security_manager.lock().await;
-        let security_manager_ref = security_manager.as_ref();
+        let _security_manager_ref = security_manager.as_ref();
         
         let mut tools = self
             .extension_manager
             .lock()
             .await
-            .get_prefixed_tools_with_security(None, security_manager_ref)
+            .get_prefixed_tools(None) // Use the non-security version for already-enabled extensions
             .await?;
 
         // Add frontend tools directly - they don't need prefixing since they're already uniquely named
@@ -273,6 +275,77 @@ impl Agent {
         tool_call: mcp_core::tool::ToolCall,
         request_id: String,
     ) -> (String, Result<ToolCallResult, ToolError>) {
+        // Security scanning: Pre-scan file content for file-reading tools
+        if let Some(security_manager) = &*self.security_manager.lock().await {
+            if self.is_file_reading_tool(&tool_call) {
+                if let Some(file_path) = self.extract_file_path_from_tool_call(&tool_call) {
+                    tracing::info!(
+                        tool_name = %tool_call.name,
+                        file_path = %file_path,
+                        "Pre-scanning file content before tool execution"
+                    );
+                    
+                    // Try to read and scan the file content before executing the tool
+                    match self.pre_scan_file_content(&file_path, security_manager).await {
+                        Ok(Some(scan_result)) => {
+                            // Check if the file actually contains threats that should be blocked
+                            if security_manager.should_block(&scan_result) || security_manager.should_ask_user(&scan_result) {
+                                // File contains malicious content - block the tool execution entirely
+                                tracing::error!(
+                                    tool_name = %tool_call.name,
+                                    file_path = %file_path,
+                                    threat_level = ?scan_result.threat_level,
+                                    explanation = %scan_result.explanation,
+                                    "🚨 SECURITY: Blocking file-reading tool due to malicious file content"
+                                );
+                                
+                                return (
+                                    request_id,
+                                    Ok(ToolCallResult::from(Ok(vec![Content::text(format!(
+                                        "🚨 **Security Alert: Malicious File Content Detected**\n\n\
+                                        The file you're trying to access contains potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
+                                        **File:** {}\n\
+                                        **Threat Level:** {:?}\n\
+                                        **Details:** {}\n\n\
+                                        For your safety, access to this file has been automatically blocked. Please review the file content and ensure it's safe before trying again.",
+                                        file_path,
+                                        scan_result.threat_level,
+                                        scan_result.explanation
+                                    ))])))
+                                );
+                            } else {
+                                // File was scanned and found to be safe, continue with tool execution
+                                tracing::info!(
+                                    tool_name = %tool_call.name,
+                                    file_path = %file_path,
+                                    threat_level = ?scan_result.threat_level,
+                                    "File pre-scan completed - file is safe, proceeding with tool execution"
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            // Security scanning disabled or file is safe, continue with tool execution
+                            tracing::info!(
+                                tool_name = %tool_call.name,
+                                file_path = %file_path,
+                                "File pre-scan completed - safe to proceed"
+                            );
+                        }
+                        Err(e) => {
+                            // Failed to pre-scan file (maybe file doesn't exist, permission issues, etc.)
+                            // Log the error but continue with tool execution - the tool itself will handle file access errors
+                            tracing::warn!(
+                                tool_name = %tool_call.name,
+                                file_path = %file_path,
+                                error = %e,
+                                "Failed to pre-scan file content, continuing with tool execution"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Check if this tool call should be allowed based on repetition monitoring
         if let Some(monitor) = self.tool_monitor.lock().await.as_mut() {
             let tool_call_info = ToolCall::new(tool_call.name.clone(), tool_call.arguments.clone());
@@ -579,12 +652,10 @@ impl Agent {
     }
 
     pub async fn list_tools(&self, extension_name: Option<String>) -> Vec<Tool> {
-        let security_manager = self.security_manager.lock().await;
-        let security_manager_ref = security_manager.as_ref();
-        
+        // For listing tools, don't re-scan already-enabled extensions
         let extension_manager = self.extension_manager.lock().await;
         let mut prefixed_tools = extension_manager
-            .get_prefixed_tools_with_security(extension_name.clone(), security_manager_ref)
+            .get_prefixed_tools(extension_name.clone()) // Use non-security version
             .await
             .unwrap_or_default();
 
@@ -632,14 +703,11 @@ impl Agent {
         let selector = self.router_tool_selector.lock().await.clone();
         if let Some(selector) = selector {
             if let Ok(recent_calls) = selector.get_recent_tool_calls(20).await {
-                let security_manager = self.security_manager.lock().await;
-                let security_manager_ref = security_manager.as_ref();
-                
                 let extension_manager = self.extension_manager.lock().await;
                 // Add recent tool calls to the list, avoiding duplicates
                 for tool_name in recent_calls {
-                    // Find the tool in the extension manager's tools
-                    if let Ok(extension_tools) = extension_manager.get_prefixed_tools_with_security(None, security_manager_ref).await {
+                    // Find the tool in the extension manager's tools - no security scanning needed
+                    if let Ok(extension_tools) = extension_manager.get_prefixed_tools(None).await {
                         if let Some(tool) = extension_tools.iter().find(|t| t.name == tool_name) {
                             // Only add if not already in prefixed_tools
                             if !prefixed_tools.iter().any(|t| t.name == tool.name) {
@@ -848,6 +916,116 @@ impl Agent {
         }
     }
 
+    /// Check if a tool call is a file-reading tool that should be pre-scanned
+    fn is_file_reading_tool(&self, tool_call: &mcp_core::tool::ToolCall) -> bool {
+        // List of known file-reading tools that should be pre-scanned
+        let file_reading_tools = [
+            "developer__text_editor", // When command is "view"
+            "developer__file_reader",
+            "file_reader",
+            "read_file",
+            "view_file",
+            "cat_file",
+            // Add more file-reading tool patterns as needed
+        ];
+        
+        // Check if the tool name matches any known file-reading tools
+        if file_reading_tools.iter().any(|&pattern| tool_call.name.contains(pattern)) {
+            // For developer__text_editor, only pre-scan if command is "view"
+            if tool_call.name.contains("text_editor") {
+                if let Some(command) = tool_call.arguments.get("command") {
+                    return command.as_str() == Some("view");
+                }
+                return false;
+            }
+            return true;
+        }
+        
+        false
+    }
+
+    /// Extract file path from a file-reading tool call
+    fn extract_file_path_from_tool_call(&self, tool_call: &mcp_core::tool::ToolCall) -> Option<String> {
+        // Try different common parameter names for file paths
+        let path_params = ["path", "file_path", "filepath", "file", "filename"];
+        
+        for param in &path_params {
+            if let Some(value) = tool_call.arguments.get(param) {
+                if let Some(path_str) = value.as_str() {
+                    return Some(path_str.to_string());
+                }
+            }
+        }
+        
+        None
+    }
+
+    /// Pre-scan file content before tool execution
+    async fn pre_scan_file_content(
+        &self,
+        file_path: &str,
+        security_manager: &crate::security::SecurityManager,
+    ) -> Result<Option<crate::security::content_scanner::ScanResult>, anyhow::Error> {
+        use std::path::Path;
+        use tokio::fs;
+        
+        let path = Path::new(file_path);
+        
+        // Check if file exists and is readable
+        if !path.exists() {
+            return Err(anyhow::anyhow!("File does not exist: {}", file_path));
+        }
+        
+        if !path.is_file() {
+            return Err(anyhow::anyhow!("Path is not a file: {}", file_path));
+        }
+        
+        // Read file content
+        let file_content = match fs::read_to_string(path).await {
+            Ok(content) => content,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to read file {}: {}", file_path, e));
+            }
+        };
+        
+        // Skip scanning very large files to avoid performance issues
+        const MAX_FILE_SIZE_FOR_SCANNING: usize = 1024 * 1024; // 1MB
+        if file_content.len() > MAX_FILE_SIZE_FOR_SCANNING {
+            tracing::warn!(
+                file_path = %file_path,
+                file_size = file_content.len(),
+                max_size = MAX_FILE_SIZE_FOR_SCANNING,
+                "Skipping security scan of large file"
+            );
+            return Ok(None);
+        }
+        
+        // Skip scanning obviously safe files (empty or very short)
+        if file_content.trim().is_empty() || file_content.len() < 10 {
+            tracing::debug!(
+                file_path = %file_path,
+                file_size = file_content.len(),
+                "Skipping security scan of empty/tiny file"
+            );
+            return Ok(None);
+        }
+        
+        tracing::info!(
+            file_path = %file_path,
+            content_length = file_content.len(),
+            content_preview = %if file_content.len() > 200 {
+                format!("{}...", &file_content[..200])
+            } else {
+                file_content.clone()
+            },
+            "Scanning file content for security threats"
+        );
+        
+        // Scan the file content
+        let content_for_scanning = vec![mcp_core::Content::text(file_content)];
+        security_manager.scan_content(&content_for_scanning).await
+    }
+
     #[instrument(skip(self, messages, session), fields(user_message))]
     pub async fn reply(
         &self,
@@ -861,23 +1039,71 @@ impl Agent {
         if let Some(security_manager) = &*self.security_manager.lock().await {
             // Find the last user message (the new one we need to scan)
             if let Some(latest_user_message) = messages.iter().rev().find(|msg| msg.role == Role::User) {
-                tracing::info!("Starting security scan of latest user message");
+                tracing::info!("Starting comprehensive security scan of latest user message");
                 
-                // Extract text content from the latest user message
-                let text_contents: Vec<String> = latest_user_message.content.iter()
-                    .filter_map(|c| c.as_text().map(String::from))
-                    .collect();
+                // Extract ALL content from the latest user message (text, files, images)
+                let mut all_content_for_scanning = Vec::new();
+                let mut text_contents = Vec::new();
+                let has_file_content = false;
+                let mut has_image_content = false;
                 
-                if !text_contents.is_empty() {
+                for content in &latest_user_message.content {
+                    match content {
+                        MessageContent::Text(text_content) => {
+                            text_contents.push(text_content.text.clone());
+                            all_content_for_scanning.push(Content::text(text_content.text.clone()));
+                        }
+                        MessageContent::Image(image_content) => {
+                            has_image_content = true;
+                            tracing::info!(
+                                mime_type = %image_content.mime_type,
+                                data_length = image_content.data.len(),
+                                "Found image content in user message for security scanning"
+                            );
+                            // For now, we'll scan image data as text (base64 or similar)
+                            // TODO: Could implement specialized image content analysis
+                            all_content_for_scanning.push(Content::text(format!(
+                                "Image data ({}): {}", 
+                                image_content.mime_type,
+                                if image_content.data.len() > 200 {
+                                    format!("{}...", &image_content.data[..200])
+                                } else {
+                                    image_content.data.clone()
+                                }
+                            )));
+                        }
+                        // Handle other message content types that might contain file data
+                        // Note: File content typically comes through tool responses or resources
+                        // For now, we'll focus on text and image content in user messages
+                        _ => {
+                            // Check if this content can be converted to text for scanning
+                            if let Some(text) = content.as_text() {
+                                text_contents.push(text.to_string());
+                                all_content_for_scanning.push(Content::text(text.to_string()));
+                            }
+                        }
+                    }
+                }
+                
+                // TODO: Add file content scanning when files are uploaded
+                // This would require detecting when user messages contain file references
+                // and extracting the actual file content for scanning
+                
+                if !all_content_for_scanning.is_empty() {
+                    // Create a combined text representation for hashing and caching
                     let combined_text = text_contents.join("\n");
-                    
-                    // Check if this message was previously approved or denied
                     let message_hash = Self::hash_message_content(&combined_text);
+                    
                     tracing::info!(
-                        content = %combined_text,
+                        text_content_count = text_contents.len(),
+                        file_content = has_file_content,
+                        image_content = has_image_content,
+                        total_content_items = all_content_for_scanning.len(),
                         hash = %message_hash,
-                        "Generated hash for latest user message"
+                        "Prepared content for security scanning"
                     );
+                    
+                    // Check if this message was previously approved or denied (based on text content hash)
                     let approved_messages = self.approved_security_messages.lock().await;
                     let denied_messages = self.denied_security_messages.lock().await;
                     
@@ -919,18 +1145,43 @@ impl Agent {
                     } else {
                         // Only scan messages that haven't been approved or denied
                         
-                        // Skip scanning obviously safe messages to reduce false positives
-                        let is_obviously_safe = Self::is_obviously_safe_message(&combined_text);
+                        // Skip scanning obviously safe messages to reduce false positives (only for text-only messages)
+                        let is_obviously_safe = !has_file_content && !has_image_content && 
+                            text_contents.len() == 1 && 
+                            Self::is_obviously_safe_message(&text_contents[0]);
                         
                         if !is_obviously_safe {
-                            let content = vec![Content::text(combined_text.clone())];
-                            
                             tracing::info!(
-                                "Scanning latest user input message for security threats"
+                                "Scanning user message content for security threats (including files and images)"
                             );
                             
-                            match security_manager.scan_content(&content).await {
+                            match security_manager.scan_content(&all_content_for_scanning).await {
                                 Ok(Some(scan_result)) => {
+                                    // For file content, always auto-block without user confirmation
+                                    // Users may not know what's in files, so it's safer to block automatically
+                                    if has_file_content && (security_manager.should_block(&scan_result) || security_manager.should_ask_user(&scan_result)) {
+                                        tracing::error!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "Security threat detected in uploaded file content - auto-blocking without user confirmation"
+                                        );
+                                        
+                                        return Ok(Box::pin(async_stream::try_stream! {
+                                            yield AgentEvent::Message(
+                                                Message::assistant().with_text(format!(
+                                                    "🚨 **Security Alert: Malicious File Content Detected**\n\n\
+                                                    Your uploaded file contains potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
+                                                    **Threat Level:** {:?}\n\
+                                                    **Details:** {}\n\n\
+                                                    For your safety, this request has been automatically blocked. Please review your file content and try again with a safe file.",
+                                                    scan_result.threat_level,
+                                                    scan_result.explanation
+                                                ))
+                                            );
+                                        }));
+                                    }
+                                    
+                                    // For text/image content, use normal confirmation flow
                                     if security_manager.should_ask_user(&scan_result) {
                                         tracing::warn!(
                                             threat_level = ?scan_result.threat_level,
@@ -957,11 +1208,14 @@ impl Agent {
                                                 serde_json::json!({
                                                     "threat_level": threat_level_str,
                                                     "explanation": scan_result.explanation,
-                                                    "flagged_content": combined_text.clone()
+                                                    "flagged_content": combined_text.clone(),
+                                                    "has_file_content": has_file_content,
+                                                    "has_image_content": has_image_content
                                                 }),
                                                 Some(format!(
-                                                    "🚨 Security Alert: {} threat detected\n\n{}\n\nDo you want to proceed with this message?", 
-                                                    threat_level_str, 
+                                                    "🚨 Security Alert: {} threat detected{}\n\n{}\n\nDo you want to proceed with this message?", 
+                                                    threat_level_str,
+                                                    if has_image_content { " in message with image content" } else { "" },
                                                     scan_result.explanation
                                                 )),
                                             );
@@ -1018,7 +1272,7 @@ impl Agent {
                         } else {
                             tracing::debug!(
                                 content = %combined_text,
-                                "Skipping security scan of obviously safe short message"
+                                "Skipping security scan of obviously safe short text-only message"
                             );
                             // Continue - this message is safe
                         }
@@ -1531,11 +1785,9 @@ impl Agent {
     }
 
     pub async fn get_plan_prompt(&self) -> anyhow::Result<String> {
-        let security_manager = self.security_manager.lock().await;
-        let security_manager_ref = security_manager.as_ref();
-        
+        // For plan prompt, don't re-scan already-enabled extensions
         let extension_manager = self.extension_manager.lock().await;
-        let tools = extension_manager.get_prefixed_tools_with_security(None, security_manager_ref).await?;
+        let tools = extension_manager.get_prefixed_tools(None).await?;
         let tools_info = tools
             .into_iter()
             .map(|tool| {
