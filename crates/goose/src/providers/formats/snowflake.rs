@@ -76,6 +76,9 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 MessageContent::FrontendToolRequest(_tool_request) => {
                     // Skip frontend tool requests
                 }
+                MessageContent::SecurityNote(_) => {
+                    // Security notes are handled by the UI, skip in provider formatting
+                }
             }
         }
 

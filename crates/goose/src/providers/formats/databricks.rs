@@ -218,6 +218,9 @@ pub fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<
                         }));
                     }
                 }
+                MessageContent::SecurityNote(_) => {
+                    // Security notes are handled by the UI, skip in provider formatting
+                }
             }
         }
 

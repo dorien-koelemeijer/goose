@@ -108,6 +108,10 @@ pub fn to_bedrock_message_content(content: &MessageContent) -> Result<bedrock::C
                     .build()?,
             )
         }
+        MessageContent::SecurityNote(_) => {
+            // Security notes are handled by the UI, skip in provider formatting
+            bedrock::ContentBlock::Text("".to_string())
+        }
     })
 }
 
