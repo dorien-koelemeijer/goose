@@ -464,38 +464,48 @@ impl ExtensionManager {
                     "Starting security scan of MCP tool definition"
                 );
                 
-                match security_manager.scan_content(&[mcp_core::Content::text(tool_info)]).await {
+                match security_manager.scan_content_with_type(&[mcp_core::Content::text(tool_info)], crate::security::config::ContentType::Extension).await {
                     Ok(Some(scan_result)) => {
-                        if security_manager.should_block(&scan_result) {
-                            tracing::error!(
-                                tool_name = %tool.name,
-                                threat_level = ?scan_result.threat_level,
-                                explanation = %scan_result.explanation,
-                                "🚨 SECURITY: Blocking malicious MCP tool"
-                            );
-                            // Skip this tool - don't add it to safe_tools
-                            continue;
-                        } else if security_manager.should_ask_user(&scan_result) {
-                            tracing::warn!(
-                                tool_name = %tool.name,
-                                threat_level = ?scan_result.threat_level,
-                                explanation = %scan_result.explanation,
-                                "⚠️ SECURITY: Suspicious MCP tool detected - returning error to trigger user confirmation"
-                            );
-                            // Return an error that will be handled by the agent to show user confirmation
-                            // The agent can catch this specific error and show a confirmation UI
-                            return Err(ExtensionError::SecurityThreat {
-                                tool_name: tool.name.clone(),
-                                threat_level: format!("{:?}", scan_result.threat_level),
-                                explanation: scan_result.explanation.clone(),
-                            });
-                        } else {
-                            tracing::info!(
-                                tool_name = %tool.name,
-                                "MCP tool scan result: Safe"
-                            );
-                            // Tool is safe or below threshold
-                            safe_tools.push(tool);
+                        let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::Extension, &scan_result.threat_level);
+                        
+                        match action_policy {
+                            crate::security::config::ActionPolicy::Block => {
+                                tracing::error!(
+                                    tool_name = %tool.name,
+                                    threat_level = ?scan_result.threat_level,
+                                    explanation = %scan_result.explanation,
+                                    "🚨 SECURITY: Blocking malicious MCP tool - failing extension installation"
+                                );
+                                // Return error to prevent extension installation
+                                return Err(ExtensionError::SecurityThreat {
+                                    tool_name: tool.name.clone(),
+                                    threat_level: format!("{:?}", scan_result.threat_level),
+                                    explanation: scan_result.explanation.clone(),
+                                });
+                            }
+                            crate::security::config::ActionPolicy::BlockWithNote => {
+                                tracing::warn!(
+                                    tool_name = %tool.name,
+                                    threat_level = ?scan_result.threat_level,
+                                    explanation = %scan_result.explanation,
+                                    "⚠️ SECURITY: Suspicious MCP tool detected - returning error to trigger user confirmation"
+                                );
+                                // Return an error that will be handled by the agent to show user confirmation
+                                return Err(ExtensionError::SecurityThreat {
+                                    tool_name: tool.name.clone(),
+                                    threat_level: format!("{:?}", scan_result.threat_level),
+                                    explanation: scan_result.explanation.clone(),
+                                });
+                            }
+                            _ => {
+                                tracing::info!(
+                                    tool_name = %tool.name,
+                                    action_policy = ?action_policy,
+                                    "MCP tool scan result: Safe or allowed"
+                                );
+                                // Tool is safe or allowed, add it
+                                safe_tools.push(tool);
+                            }
                         }
                     }
                     Ok(None) => {

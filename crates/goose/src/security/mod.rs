@@ -1,5 +1,6 @@
 pub mod config;
 pub mod content_scanner;
+pub mod feedback_manager;
 pub mod model_downloader;
 pub mod model_pool;
 pub mod rust_scanners;
@@ -21,8 +22,9 @@ mod test_scanner;
 mod test_ensemble;
 
 use anyhow::Result;
-use config::{ActionPolicy, ScannerType, SecurityConfig, ThreatThreshold};
+use config::{ActionPolicy, ContentType, EffectiveConfig, ScannerType, SecurityConfig};
 use content_scanner::{ContentScanner, ScanResult, ThreatLevel};
+use feedback_manager::SecurityFeedbackManager;
 use mcp_core::Content;
 use serde_json::Value;
 use std::sync::Arc;
@@ -38,6 +40,7 @@ use rust_scanners::{OnnxDeepsetDebertaScanner, OnnxProtectAiDebertaScanner};
 pub struct SecurityManager {
     config: SecurityConfig,
     scanner: Option<Arc<dyn ContentScanner>>,
+    feedback_manager: SecurityFeedbackManager,
 }
 // check if this is the right scanner or if it should be RustProtectAiDeberta
 impl SecurityManager {
@@ -174,7 +177,11 @@ impl SecurityManager {
             None
         };
 
-        Self { config, scanner }
+        Self { 
+            config, 
+            scanner,
+            feedback_manager: SecurityFeedbackManager::new(),
+        }
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -257,10 +264,16 @@ impl SecurityManager {
     }
 
     pub async fn scan_content(&self, content: &[Content]) -> Result<Option<ScanResult>> {
+        self.scan_content_with_type(content, ContentType::UserMessage).await
+    }
+
+    pub async fn scan_content_with_type(&self, content: &[Content], content_type: ContentType) -> Result<Option<ScanResult>> {
         if !self.is_enabled() {
             tracing::info!("Security scanner is disabled, skipping content scan");
             return Ok(None);
         }
+
+        let effective_config = self.config.get_config_for_type(content_type);
 
         // Log the content being scanned for debugging
         let content_text: Vec<String> = content.iter()
@@ -274,9 +287,13 @@ impl SecurityManager {
         };
         
         tracing::info!(
+            content_type = ?content_type,
             content_length = combined_text.len(),
             content_preview = %preview,
-            "Starting security scan of content"
+            confidence_threshold = effective_config.confidence_threshold,
+            scan_threshold = ?effective_config.scan_threshold,
+            action_policy = ?effective_config.action_policy,
+            "Starting security scan of content with type-specific configuration"
         );
         
         let scanner = self.scanner.as_ref()
@@ -284,17 +301,22 @@ impl SecurityManager {
         
         // Handle the case where security models aren't ready yet
         match scanner.scan_content(content).await {
-            Ok(scan_result) => {
+            Ok(mut scan_result) => {
+                // Apply content-type-specific thresholds to the scan result
+                scan_result = self.apply_type_specific_thresholds(scan_result, &effective_config);
+                
                 // Log the scan result with message content for debugging
                 match scan_result.threat_level {
                     ThreatLevel::Safe => {
                         tracing::info!(
+                            content_type = ?content_type,
                             content_preview = %preview,
                             "Content scan result: Safe"
                         );
                     }
                     ThreatLevel::Low => {
                         tracing::info!(
+                            content_type = ?content_type,
                             threat = "low",
                             content_preview = %preview,
                             explanation = %scan_result.explanation,
@@ -303,6 +325,7 @@ impl SecurityManager {
                     }
                     ThreatLevel::Medium => {
                         tracing::info!(
+                            content_type = ?content_type,
                             threat = "medium",
                             content_preview = %preview,
                             explanation = %scan_result.explanation,
@@ -311,6 +334,7 @@ impl SecurityManager {
                     }
                     ThreatLevel::High | ThreatLevel::Critical => {
                         tracing::warn!(
+                            content_type = ?content_type,
                             threat = ?scan_result.threat_level,
                             content_preview = %preview,
                             explanation = %scan_result.explanation,
@@ -331,6 +355,27 @@ impl SecurityManager {
                 }
             }
         }
+    }
+
+    /// Apply content-type-specific thresholds to adjust the scan result
+    fn apply_type_specific_thresholds(&self, scan_result: ScanResult, effective_config: &EffectiveConfig) -> ScanResult {
+        // If the effective confidence threshold is higher than the default,
+        // we might need to downgrade the threat level
+        if effective_config.confidence_threshold > self.config.confidence_threshold {
+            // This is a simplified approach - we might want to
+            // re-evaluate the raw confidence scores with the new threshold
+            tracing::debug!(
+                original_threshold = self.config.confidence_threshold,
+                effective_threshold = effective_config.confidence_threshold,
+                original_threat = ?scan_result.threat_level,
+                "Applying content-type-specific threshold adjustment"
+            );
+            
+            // For now, we'll keep the original scan result but the should_block/should_ask_user
+            // methods will use the effective config
+        }
+        
+        scan_result
     }
 
     pub async fn scan_tool_result(
@@ -386,69 +431,81 @@ impl SecurityManager {
     }
 
     pub fn should_block(&self, scan_result: &ScanResult) -> bool {
-        if !self.config.enabled || self.config.action_policy != ActionPolicy::Block {
+        self.should_block_for_type(scan_result, ContentType::UserMessage)
+    }
+
+    pub fn should_block_for_type(&self, scan_result: &ScanResult, content_type: ContentType) -> bool {
+        let action_policy = self.config.get_action_for_threat(content_type, &scan_result.threat_level);
+        
+        if !self.config.enabled {
             return false;
         }
 
-        // Check if threat level is at or above threshold
-        match self.config.scan_threshold {
-            ThreatThreshold::Any => scan_result.threat_level != ThreatLevel::Safe,
-            ThreatThreshold::Low => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::Low
-                        | ThreatLevel::Medium
-                        | ThreatLevel::High
-                        | ThreatLevel::Critical
-                )
+        matches!(action_policy, ActionPolicy::Block | ActionPolicy::BlockWithNote)
+    }
+
+    pub fn should_process_with_note(&self, scan_result: &ScanResult, content_type: ContentType) -> bool {
+        let action_policy = self.config.get_action_for_threat(content_type, &scan_result.threat_level);
+        
+        if !self.config.enabled {
+            return false;
+        }
+
+        matches!(action_policy, ActionPolicy::ProcessWithNote)
+    }
+
+    /// Create a security note for the UI to display
+    pub fn create_security_note(
+        &self,
+        scan_result: &ScanResult,
+        content_type: ContentType,
+    ) -> Option<config::SecurityNote> {
+        if !self.is_enabled() {
+            return None;
+        }
+
+        let action_taken = self.config.get_action_for_threat(content_type, &scan_result.threat_level);
+        
+        // Determine feedback options directly from action type - WithNote actions get feedback
+        let show_feedback_options = matches!(action_taken, 
+            ActionPolicy::ProcessWithNote | ActionPolicy::BlockWithNote
+        );
+
+        // Only create notes for actions that show something to the user
+        match action_taken {
+            ActionPolicy::ProcessWithNote | ActionPolicy::Block | ActionPolicy::BlockWithNote => {
+                Some(self.feedback_manager.create_security_note(
+                    content_type,
+                    scan_result,
+                    action_taken,
+                    show_feedback_options,
+                ))
             }
-            ThreatThreshold::Medium => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::Medium | ThreatLevel::High | ThreatLevel::Critical
-                )
-            }
-            ThreatThreshold::High => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::High | ThreatLevel::Critical
-                )
-            }
-            ThreatThreshold::Critical => scan_result.threat_level == ThreatLevel::Critical,
+            _ => None,
         }
     }
 
-    pub fn should_ask_user(&self, scan_result: &ScanResult) -> bool {
-        if !self.config.enabled || self.config.action_policy != ActionPolicy::AskUser {
-            return false;
-        }
+    /// Log user feedback (simple logging for now)
+    pub fn log_user_feedback(
+        &self,
+        note_id: &str,
+        feedback_type: config::FeedbackType,
+        content_type: ContentType,
+        threat_level: &ThreatLevel,
+        user_comment: Option<&str>,
+    ) {
+        self.feedback_manager.log_user_feedback(
+            note_id,
+            feedback_type,
+            content_type,
+            threat_level,
+            user_comment,
+        );
+    }
 
-        // Check if threat level is at or above threshold
-        match self.config.scan_threshold {
-            ThreatThreshold::Any => scan_result.threat_level != ThreatLevel::Safe,
-            ThreatThreshold::Low => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::Low
-                        | ThreatLevel::Medium
-                        | ThreatLevel::High
-                        | ThreatLevel::Critical
-                )
-            }
-            ThreatThreshold::Medium => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::Medium | ThreatLevel::High | ThreatLevel::Critical
-                )
-            }
-            ThreatThreshold::High => {
-                matches!(
-                    scan_result.threat_level,
-                    ThreatLevel::High | ThreatLevel::Critical
-                )
-            }
-            ThreatThreshold::Critical => scan_result.threat_level == ThreatLevel::Critical,
-        }
+    /// Get the action policy for a specific threat level and content type
+    pub fn get_action_for_threat(&self, content_type: ContentType, threat_level: &ThreatLevel) -> ActionPolicy {
+        self.config.get_action_for_threat(content_type, threat_level)
     }
 
     pub fn get_safe_content(&self, original: &[Content], scan_result: &ScanResult) -> Vec<Content> {

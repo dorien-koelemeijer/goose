@@ -90,7 +90,8 @@ impl Agent {
                 tracing::info!("Scanning system prompt for security threats");
                 
                 if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
-                    if security_manager.should_ask_user(&scan_result) {
+                    let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::UserMessage, &scan_result.threat_level);
+                    if matches!(action_policy, crate::security::config::ActionPolicy::BlockWithNote) {
                         tracing::warn!(
                             threat_level = ?scan_result.threat_level,
                             explanation = %scan_result.explanation,

@@ -5,7 +5,7 @@ use goose::config::permission::PermissionLevel;
 use goose::config::ExtensionEntry;
 use goose::message::{
     ContextLengthExceeded, FrontendToolRequest, Message, MessageContent, RedactedThinkingContent,
-    SecurityConfirmationRequest, SummarizationRequested, ThinkingContent, ToolConfirmationRequest, ToolRequest, ToolResponse,
+    SecurityConfirmationRequest, SecurityNoteMessage, SummarizationRequested, ThinkingContent, ToolConfirmationRequest, ToolRequest, ToolResponse,
 };
 use goose::permission::permission_confirmation::PrincipalType;
 use goose::providers::base::{ConfigKey, ModelInfo, ProviderMetadata};
@@ -35,6 +35,7 @@ use utoipa::OpenApi;
         super::routes::config_management::upsert_permissions,
         super::routes::agent::get_tools,
         super::routes::reply::confirm_permission,
+        super::routes::reply::submit_security_feedback,
         super::routes::context::manage_context,
         super::routes::session::list_sessions,
         super::routes::session::get_session_history,
@@ -60,6 +61,7 @@ use utoipa::OpenApi;
         super::routes::config_management::ToolPermission,
         super::routes::config_management::UpsertPermissionsQuery,
         super::routes::reply::PermissionConfirmationRequest,
+        super::routes::reply::SecurityFeedbackRequest,
         super::routes::context::ContextManageRequest,
         super::routes::context::ContextManageResponse,
         super::routes::session::SessionListResponse,
@@ -76,6 +78,7 @@ use utoipa::OpenApi;
         ToolResultSchema,
         ToolConfirmationRequest,
         SecurityConfirmationRequest,
+        SecurityNoteMessage,
         ThinkingContent,
         RedactedThinkingContent,
         FrontendToolRequest,

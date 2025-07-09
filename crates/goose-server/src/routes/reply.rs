@@ -433,6 +433,13 @@ pub struct SecurityConfirmationRequest {
     threat_level: String,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SecurityFeedbackRequest {
+    pub note_id: String,
+    pub feedback_type: String, // "false_positive", "missed_threat", "correct_flag"
+    pub user_comment: Option<String>,
+}
+
 fn default_principal_type() -> PrincipalType {
     PrincipalType::Tool
 }
@@ -476,6 +483,52 @@ pub async fn confirm_permission(
         )
         .await;
     Ok(Json(Value::Object(serde_json::Map::new())))
+}
+
+#[utoipa::path(
+    post,
+    path = "/security/feedback",
+    request_body = SecurityFeedbackRequest,
+    responses(
+        (status = 200, description = "Security feedback submitted successfully", body = Value),
+        (status = 401, description = "Unauthorized - invalid secret key"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+pub async fn submit_security_feedback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<SecurityFeedbackRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    verify_secret_key(&headers, &state)?;
+
+    let agent = state
+        .get_agent()
+        .await
+        .map_err(|_| StatusCode::PRECONDITION_FAILED)?;
+
+    // Parse feedback type
+    let feedback_type = match request.feedback_type.as_str() {
+        "false_positive" => goose::security::config::FeedbackType::FalsePositive,
+        "missed_threat" => goose::security::config::FeedbackType::MissedThreat,
+        "correct_flag" => goose::security::config::FeedbackType::CorrectFlag,
+        _ => {
+            tracing::warn!("Unknown feedback type: {}", request.feedback_type);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Log the feedback (simple approach for now)
+    agent.log_security_feedback(
+        &request.note_id,
+        feedback_type,
+        request.user_comment.as_deref(),
+    ).await;
+
+    Ok(Json(serde_json::json!({
+        "status": "success",
+        "message": "Security feedback submitted successfully"
+    })))
 }
 
 #[utoipa::path(
@@ -577,6 +630,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/ask", post(ask_handler))
         .route("/confirm", post(confirm_permission))
         .route("/security/confirm", post(confirm_security_permission))
+        .route("/security/feedback", post(submit_security_feedback))
         .route("/tool_result", post(submit_tool_result))
         .with_state(state)
 }

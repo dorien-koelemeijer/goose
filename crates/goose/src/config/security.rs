@@ -6,37 +6,12 @@ pub struct SecuritySettings {
     /// Whether security scanning is enabled
     #[serde(default)]
     pub enabled: bool,
-    
-    /// Confidence threshold for threat detection (0.0-1.0)
-    #[serde(default = "default_confidence_threshold")]
-    pub confidence_threshold: f32,
-    
-    /// Deepset DeBERTa model confidence threshold
-    #[serde(default = "default_deepset_threshold")]
-    pub deepset_threshold: f32,
-    
-    /// ProtectAI DeBERTa model confidence threshold  
-    #[serde(default = "default_protectai_threshold")]
-    pub protectai_threshold: f32,
-    
-    /// Threat threshold level (Any, Low, Medium, High, Critical)
-    #[serde(default = "default_threat_threshold")]
-    pub threat_threshold: String,
 }
-
-fn default_confidence_threshold() -> f32 { 0.5 }
-fn default_deepset_threshold() -> f32 { 0.7 }
-fn default_protectai_threshold() -> f32 { 0.5 }
-fn default_threat_threshold() -> String { "Medium".to_string() }
 
 impl Default for SecuritySettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            confidence_threshold: default_confidence_threshold(),
-            deepset_threshold: default_deepset_threshold(),
-            protectai_threshold: default_protectai_threshold(),
-            threat_threshold: default_threat_threshold(),
         }
     }
 }
@@ -56,46 +31,92 @@ impl SecuritySettings {
                 confidence_threshold: 0.7,
                 ensemble_config: None,
                 hybrid_config: None,
+                user_messages: None,
+                file_content: None,
+                tool_results: None,
+                extensions: None,
+                agent_responses: None,
             };
         }
         
-        // Parse threat threshold
-        let scan_threshold = match self.threat_threshold.to_lowercase().as_str() {
-            "any" => ThreatThreshold::Any,
-            "low" => ThreatThreshold::Low,
-            "medium" => ThreatThreshold::Medium,
-            "high" => ThreatThreshold::High,
-            "critical" => ThreatThreshold::Critical,
-            _ => ThreatThreshold::Medium, // Default fallback
-        };
-        
-        // When enabled, use ONNX ensemble with configurable thresholds
+        // Hardcoded security policies - controlled by security engineers, not users
         SecurityConfig {
             enabled: true,
             scanner_type: ScannerType::ParallelEnsemble,
             ollama_endpoint: "http://localhost:11434".to_string(),
-            action_policy: ActionPolicy::AskUser, // Ask user for confirmation on threats
-            scan_threshold,
-            confidence_threshold: self.confidence_threshold,
+            action_policy: ActionPolicy::ProcessWithNote, // Default fallback
+            scan_threshold: ThreatThreshold::Medium,
+            confidence_threshold: 0.5,
             ensemble_config: Some(EnsembleConfig {
-                voting_strategy: VotingStrategy::WeightedVote, // Use weighted voting to favor ProtectAI
+                voting_strategy: VotingStrategy::WeightedVote,
                 member_configs: vec![
                     EnsembleMember {
                         scanner_type: ScannerType::RustDeepsetDeberta,
-                        confidence_threshold: self.deepset_threshold,
-                        weight: 0.1, // Very low weight - only contributes when ProtectAI is uncertain
+                        confidence_threshold: 0.7,
+                        weight: 0.1, // Low weight - only contributes when ProtectAI is uncertain
                     },
                     EnsembleMember {
                         scanner_type: ScannerType::RustProtectAiDeberta,
-                        confidence_threshold: self.protectai_threshold,
-                        weight: 0.9, // Dominant weight - ProtectAI drives the decision
+                        confidence_threshold: 0.5,
+                        weight: 0.9, // High weight - ProtectAI drives the decision
                     },
                 ],
-                max_scan_time_ms: Some(800),     // 800ms timeout
-                min_models_required: Some(1),    // At least one model must respond
-                early_exit_threshold: Some(0.8), // Early exit threshold
+                max_scan_time_ms: Some(800),
+                min_models_required: Some(1),
+                early_exit_threshold: Some(0.8),
             }),
-            hybrid_config: None, // No hybrid configuration
+            hybrid_config: None,
+            
+            // Hardcoded content-type-specific policies
+            user_messages: Some(ContentTypeConfig {
+                confidence_threshold: None, // Use global default
+                scan_threshold: None, // Use global default
+                action_policy: None, // Use severity-specific policies
+                low_action: Some(ActionPolicy::Process),
+                medium_action: Some(ActionPolicy::ProcessWithNote),
+                high_action: Some(ActionPolicy::BlockWithNote),
+                critical_action: Some(ActionPolicy::Block),
+            }),
+            
+            file_content: Some(ContentTypeConfig {
+                confidence_threshold: Some(0.4), // More sensitive for files
+                scan_threshold: None, // Use global default
+                action_policy: None, // Use severity-specific policies
+                low_action: Some(ActionPolicy::ProcessWithNote),
+                medium_action: Some(ActionPolicy::BlockWithNote),
+                high_action: Some(ActionPolicy::BlockWithNote),
+                critical_action: Some(ActionPolicy::BlockWithNote),
+            }),
+            
+            tool_results: Some(ContentTypeConfig {
+                confidence_threshold: None, // Use global default
+                scan_threshold: None, // Use global default
+                action_policy: None, // Use severity-specific policies
+                low_action: Some(ActionPolicy::Process),
+                medium_action: Some(ActionPolicy::ProcessWithNote),
+                high_action: Some(ActionPolicy::ProcessWithNote),
+                critical_action: Some(ActionPolicy::Block),
+            }),
+            
+            extensions: Some(ContentTypeConfig {
+                confidence_threshold: Some(0.35), // Very sensitive for extensions
+                scan_threshold: Some(ThreatThreshold::Low),
+                action_policy: None, // Use severity-specific policies
+                low_action: Some(ActionPolicy::BlockWithNote),
+                medium_action: Some(ActionPolicy::Block),
+                high_action: Some(ActionPolicy::Block),
+                critical_action: Some(ActionPolicy::Block),
+            }),
+            
+            agent_responses: Some(ContentTypeConfig {
+                confidence_threshold: Some(0.75), // Less sensitive for agent responses
+                scan_threshold: Some(ThreatThreshold::High),
+                action_policy: None, // Use severity-specific policies
+                low_action: Some(ActionPolicy::Process),
+                medium_action: Some(ActionPolicy::Process),
+                high_action: Some(ActionPolicy::ProcessWithNote),
+                critical_action: Some(ActionPolicy::LogOnly),
+            }),
         }
     }
 }

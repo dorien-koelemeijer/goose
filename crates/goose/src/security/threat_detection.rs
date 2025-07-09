@@ -158,11 +158,10 @@ if __name__ == "__main__":
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Medium,
-                explanation: format!("Deepset DeBERTa execution failed: {}", stderr),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Medium,
+                format!("Deepset DeBERTa execution failed: {}", stderr),
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -208,11 +207,7 @@ if __name__ == "__main__":
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
 
-        Ok(ScanResult {
-            threat_level,
-            explanation: final_explanation,
-            sanitized_content: None,
-        })
+        Ok(ScanResult::with_confidence(threat_level, confidence, final_explanation))
     }
 }
 
@@ -386,11 +381,10 @@ if __name__ == "__main__":
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Medium,
-                explanation: format!("ToxicBERT execution failed: {}", stderr),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Medium,
+                format!("ToxicBERT execution failed: {}", stderr),
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -436,11 +430,7 @@ if __name__ == "__main__":
             format!("{} (confidence: {:.3})", explanation, confidence)
         };
 
-        Ok(ScanResult {
-            threat_level,
-            explanation: final_explanation,
-            sanitized_content: None,
-        })
+        Ok(ScanResult::with_confidence(threat_level, confidence, final_explanation))
     }
 }
 
@@ -496,11 +486,10 @@ impl OpenAiModerationScanner {
 
     async fn analyze_with_api(&self, text: &str) -> Result<ScanResult> {
         if self.api_key.is_empty() {
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Medium,
-                explanation: "OpenAI API key not configured".to_string(),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Medium,
+                "OpenAI API key not configured".to_string(),
+            ));
         }
 
         let client = reqwest::Client::new();
@@ -530,11 +519,10 @@ impl OpenAiModerationScanner {
             .unwrap_or(&empty_vec);
 
         if results.is_empty() {
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Medium,
-                explanation: "No moderation results returned".to_string(),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Medium,
+                "No moderation results returned".to_string(),
+            ));
         }
 
         let result = &results[0];
@@ -544,11 +532,10 @@ impl OpenAiModerationScanner {
             .unwrap_or(false);
 
         if !flagged {
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Safe,
-                explanation: "Content passed OpenAI moderation".to_string(),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Safe,
+                "Content passed OpenAI moderation".to_string(),
+            ));
         }
 
         // Check category scores to determine threat level
@@ -581,11 +568,7 @@ impl OpenAiModerationScanner {
             )
         };
 
-        Ok(ScanResult {
-            threat_level,
-            explanation,
-            sanitized_content: None,
-        })
+        Ok(ScanResult::with_confidence(threat_level, max_score, explanation))
     }
 }
 
@@ -734,11 +717,10 @@ impl ParallelEnsembleScanner {
         }
 
         if successful_results.is_empty() {
-            return Ok(ScanResult {
-                threat_level: ThreatLevel::Medium,
-                explanation: "All ensemble members failed".to_string(),
-                sanitized_content: None,
-            });
+            return Ok(ScanResult::new(
+                ThreatLevel::Medium,
+                "All ensemble members failed".to_string(),
+            ));
         }
 
         // Apply voting strategy
@@ -761,11 +743,7 @@ impl ParallelEnsembleScanner {
             explanations.join(" | ")
         );
 
-        Ok(ScanResult {
-            threat_level: final_threat_level,
-            explanation: combined_explanation,
-            sanitized_content: None, // Ensemble doesn't provide sanitization
-        })
+        Ok(ScanResult::new(final_threat_level, combined_explanation))
     }
 
     fn any_detection_vote(

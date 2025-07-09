@@ -10,6 +10,35 @@ pub struct SecurityConfig {
     pub confidence_threshold: f32, // Minimum confidence to flag as threat (0.0-1.0)
     pub ensemble_config: Option<EnsembleConfig>, // Configuration for ensemble scanning
     pub hybrid_config: Option<HybridTieredConfig>, // Configuration for hybrid tiered scanning
+    
+    // Content-type-specific configurations
+    pub user_messages: Option<ContentTypeConfig>,
+    pub file_content: Option<ContentTypeConfig>,
+    pub tool_results: Option<ContentTypeConfig>,
+    pub extensions: Option<ContentTypeConfig>,
+    pub agent_responses: Option<ContentTypeConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentTypeConfig {
+    pub confidence_threshold: Option<f32>,
+    pub scan_threshold: Option<ThreatThreshold>,
+    // Legacy single action policy (deprecated)
+    pub action_policy: Option<ActionPolicy>,
+    // Severity-specific action policies (new approach)
+    pub low_action: Option<ActionPolicy>,
+    pub medium_action: Option<ActionPolicy>,
+    pub high_action: Option<ActionPolicy>,
+    pub critical_action: Option<ActionPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContentType {
+    UserMessage,
+    FileContent,
+    ToolResult,
+    Extension,
+    AgentResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,11 +88,15 @@ pub enum ScannerType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ActionPolicy {
-    Block,    // Block content above threshold
-    Sanitize, // Use sanitized version if available
-    Warn,     // Just warn but allow content
-    LogOnly,  // Only log, no intervention
-    AskUser,  // Ask user for confirmation on threats above threshold
+    Process,           // Process without any notification
+    ProcessWithNote,   // Process but inform user about the detection
+    Block,            // Block with explanation
+    BlockWithNote,    // Block but allow user to provide feedback
+    LogOnly,          // Only log, no intervention
+    // Legacy policies for backward compatibility
+    Sanitize,         // Use sanitized version if available (deprecated)
+    Warn,             // Just warn but allow content (deprecated)
+    AskUser,          // Ask user for confirmation (deprecated)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -87,6 +120,99 @@ impl SecurityConfig {
             confidence_threshold: 0.7,
             ensemble_config: None,
             hybrid_config: None,
+            user_messages: None,
+            file_content: None,
+            tool_results: None,
+            extensions: None,
+            agent_responses: None,
         }
     }
+
+    /// Get the effective configuration for a specific content type
+    pub fn get_config_for_type(&self, content_type: ContentType) -> EffectiveConfig {
+        let type_config = match content_type {
+            ContentType::UserMessage => &self.user_messages,
+            ContentType::FileContent => &self.file_content,
+            ContentType::ToolResult => &self.tool_results,
+            ContentType::Extension => &self.extensions,
+            ContentType::AgentResponse => &self.agent_responses,
+        };
+
+        EffectiveConfig {
+            confidence_threshold: type_config
+                .as_ref()
+                .and_then(|c| c.confidence_threshold)
+                .unwrap_or(self.confidence_threshold),
+            scan_threshold: type_config
+                .as_ref()
+                .and_then(|c| c.scan_threshold.clone())
+                .unwrap_or(self.scan_threshold.clone()),
+            action_policy: type_config
+                .as_ref()
+                .and_then(|c| c.action_policy.clone())
+                .unwrap_or(self.action_policy.clone()),
+            content_type_config: type_config.clone(),
+        }
+    }
+
+    /// Get the action policy for a specific threat level and content type
+    pub fn get_action_for_threat(&self, content_type: ContentType, threat_level: &crate::security::content_scanner::ThreatLevel) -> ActionPolicy {
+        let type_config = match content_type {
+            ContentType::UserMessage => &self.user_messages,
+            ContentType::FileContent => &self.file_content,
+            ContentType::ToolResult => &self.tool_results,
+            ContentType::Extension => &self.extensions,
+            ContentType::AgentResponse => &self.agent_responses,
+        };
+
+        // Try to get severity-specific action policy first
+        if let Some(config) = type_config {
+            let severity_action = match threat_level {
+                crate::security::content_scanner::ThreatLevel::Low => config.low_action.clone(),
+                crate::security::content_scanner::ThreatLevel::Medium => config.medium_action.clone(),
+                crate::security::content_scanner::ThreatLevel::High => config.high_action.clone(),
+                crate::security::content_scanner::ThreatLevel::Critical => config.critical_action.clone(),
+                crate::security::content_scanner::ThreatLevel::Safe => Some(ActionPolicy::Process),
+            };
+
+            if let Some(action) = severity_action {
+                return action;
+            }
+
+            // Fall back to legacy action_policy if severity-specific not set
+            if let Some(action) = config.action_policy.clone() {
+                return action;
+            }
+        }
+
+        // Fall back to global action policy
+        self.action_policy.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectiveConfig {
+    pub confidence_threshold: f32,
+    pub scan_threshold: ThreatThreshold,
+    pub action_policy: ActionPolicy,
+    pub content_type_config: Option<ContentTypeConfig>,
+}
+
+// Security Feedback System (Simple logging approach)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FeedbackType {
+    FalsePositive,  // User says this was incorrectly flagged
+    MissedThreat,   // User says this should have been flagged
+    CorrectFlag,    // User confirms the flag was correct
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityNote {
+    pub note_id: String,
+    pub content_type: ContentType,
+    pub threat_level: crate::security::content_scanner::ThreatLevel,
+    pub explanation: String,
+    pub action_taken: ActionPolicy,
+    pub show_feedback_options: bool,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }

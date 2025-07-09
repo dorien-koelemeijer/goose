@@ -77,6 +77,19 @@ pub struct SecurityConfirmationRequest {
     pub prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ToSchema)]
+pub struct SecurityNoteMessage {
+    pub note_id: String,
+    pub content_type: String, // "user_message", "file_content", etc.
+    pub threat_level: String, // "low", "medium", "high", "critical"
+    pub explanation: String,
+    pub action_taken: String, // "processed_with_note", "blocked"
+    pub show_feedback_options: bool,
+    pub timestamp: String, // ISO 8601 timestamp
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ThinkingContent {
     pub thinking: String,
@@ -117,6 +130,7 @@ pub enum MessageContent {
     ToolResponse(ToolResponse),
     ToolConfirmationRequest(ToolConfirmationRequest),
     SecurityConfirmationRequest(SecurityConfirmationRequest),
+    SecurityNote(SecurityNoteMessage),
     FrontendToolRequest(FrontendToolRequest),
     Thinking(ThinkingContent),
     RedactedThinking(RedactedThinkingContent),
@@ -184,6 +198,26 @@ impl MessageContent {
         })
     }
 
+    pub fn security_note(
+        note_id: String,
+        content_type: String,
+        threat_level: String,
+        explanation: String,
+        action_taken: String,
+        show_feedback_options: bool,
+        timestamp: String,
+    ) -> Self {
+        MessageContent::SecurityNote(SecurityNoteMessage {
+            note_id,
+            content_type,
+            threat_level,
+            explanation,
+            action_taken,
+            show_feedback_options,
+            timestamp,
+        })
+    }
+
     pub fn thinking<S1: Into<String>, S2: Into<String>>(thinking: S1, signature: S2) -> Self {
         MessageContent::Thinking(ThinkingContent {
             thinking: thinking.into(),
@@ -246,6 +280,14 @@ impl MessageContent {
     pub fn as_security_confirmation_request(&self) -> Option<&SecurityConfirmationRequest> {
         if let MessageContent::SecurityConfirmationRequest(ref security_confirmation_request) = self {
             Some(security_confirmation_request)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_security_note(&self) -> Option<&SecurityNoteMessage> {
+        if let MessageContent::SecurityNote(ref security_note) = self {
+            Some(security_note)
         } else {
             None
         }
@@ -421,6 +463,28 @@ impl Message {
     ) -> Self {
         self.with_content(MessageContent::security_confirmation_request(
             id, threat_level, explanation, flagged_content, prompt,
+        ))
+    }
+
+    /// Add a security note to the message
+    pub fn with_security_note(
+        self,
+        note_id: String,
+        content_type: String,
+        threat_level: String,
+        explanation: String,
+        action_taken: String,
+        show_feedback_options: bool,
+        timestamp: String,
+    ) -> Self {
+        self.with_content(MessageContent::security_note(
+            note_id,
+            content_type,
+            threat_level,
+            explanation,
+            action_taken,
+            show_feedback_options,
+            timestamp,
         ))
     }
 

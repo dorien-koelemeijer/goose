@@ -211,6 +211,8 @@ export type MessageContent = (TextContent & {
     type: 'toolConfirmationRequest';
 }) | (SecurityConfirmationRequest & {
     type: 'securityConfirmationRequest';
+}) | (SecurityNoteMessage & {
+    type: 'securityNote';
 }) | (FrontendToolRequest & {
     type: 'frontendToolRequest';
 }) | (ThinkingContent & {
@@ -333,6 +335,22 @@ export type SecurityConfirmationRequest = {
     id: string;
     prompt?: string | null;
     threatLevel: string;
+};
+
+export type SecurityFeedbackRequest = {
+    feedback_type: string;
+    note_id: string;
+    user_comment?: string | null;
+};
+
+export type SecurityNoteMessage = {
+    actionTaken: string;
+    contentType: string;
+    explanation: string;
+    noteId: string;
+    showFeedbackOptions: boolean;
+    threatLevel: string;
+    timestamp: string;
 };
 
 export type SessionDisplayInfo = {
@@ -1213,6 +1231,31 @@ export type UnpauseScheduleResponses = {
 };
 
 export type UnpauseScheduleResponse = UnpauseScheduleResponses[keyof UnpauseScheduleResponses];
+
+export type SubmitSecurityFeedbackData = {
+    body: SecurityFeedbackRequest;
+    path?: never;
+    query?: never;
+    url: '/security/feedback';
+};
+
+export type SubmitSecurityFeedbackErrors = {
+    /**
+     * Unauthorized - invalid secret key
+     */
+    401: unknown;
+    /**
+     * Internal server error
+     */
+    500: unknown;
+};
+
+export type SubmitSecurityFeedbackResponses = {
+    /**
+     * Security feedback submitted successfully
+     */
+    200: unknown;
+};
 
 export type ListSessionsData = {
     body?: never;

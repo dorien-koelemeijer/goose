@@ -134,11 +134,11 @@ mod onnx_scanners {
                 )
             };
 
-            Ok(ScanResult {
+            Ok(ScanResult::with_confidence(
                 threat_level,
+                injection_probability,
                 explanation,
-                sanitized_content: None,
-            })
+            ))
         }
 
         /// Check if content is obviously safe and doesn't need detailed analysis
@@ -165,11 +165,10 @@ mod onnx_scanners {
 
             // Pre-filter obviously safe content to reduce false positives
             if Self::is_obviously_safe_content(&combined_text) {
-                return Ok(ScanResult {
-                    threat_level: ThreatLevel::Safe,
-                    explanation: "ONNX DeBERTa: Pre-filtering disabled, analyzing with ML model".to_string(),
-                    sanitized_content: None,
-                });
+                return Ok(ScanResult::new(
+                    ThreatLevel::Safe,
+                    "ONNX DeBERTa: Pre-filtering disabled, analyzing with ML model".to_string(),
+                ));
             }
 
             self.analyze_text(&combined_text).await
@@ -325,11 +324,11 @@ mod onnx_scanners {
                 )
             };
 
-            Ok(ScanResult {
+            Ok(ScanResult::with_confidence(
                 threat_level,
+                injection_probability,
                 explanation,
-                sanitized_content: None,
-            })
+            ))
         }
 
         /// Check if content is obviously safe and doesn't need detailed analysis
@@ -356,11 +355,10 @@ mod onnx_scanners {
 
             // Pre-filter obviously safe content to reduce false positives
             if Self::is_obviously_safe_content(&combined_text) {
-                return Ok(ScanResult {
-                    threat_level: ThreatLevel::Safe,
-                    explanation: "ONNX ProtectAI: Pre-filtering disabled, analyzing with ML model".to_string(),
-                    sanitized_content: None,
-                });
+                return Ok(ScanResult::new(
+                    ThreatLevel::Safe,
+                    "ONNX ProtectAI: Pre-filtering disabled, analyzing with ML model".to_string(),
+                ));
             }
 
             self.analyze_text(&combined_text).await

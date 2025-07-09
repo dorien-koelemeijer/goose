@@ -802,6 +802,40 @@
         }
       }
     },
+    "/security/feedback": {
+      "post": {
+        "tags": [
+          "super::routes::reply"
+        ],
+        "operationId": "submit_security_feedback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Security feedback submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - invalid secret key"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/sessions": {
       "get": {
         "tags": [
@@ -1600,6 +1634,27 @@
           {
             "allOf": [
               {
+                "$ref": "#/components/schemas/SecurityNoteMessage"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "securityNote"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
                 "$ref": "#/components/schemas/FrontendToolRequest"
               },
               {
@@ -1980,6 +2035,60 @@
             "nullable": true
           },
           "threatLevel": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityFeedbackRequest": {
+        "type": "object",
+        "required": [
+          "note_id",
+          "feedback_type"
+        ],
+        "properties": {
+          "feedback_type": {
+            "type": "string"
+          },
+          "note_id": {
+            "type": "string"
+          },
+          "user_comment": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "SecurityNoteMessage": {
+        "type": "object",
+        "required": [
+          "noteId",
+          "contentType",
+          "threatLevel",
+          "explanation",
+          "actionTaken",
+          "showFeedbackOptions",
+          "timestamp"
+        ],
+        "properties": {
+          "actionTaken": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "noteId": {
+            "type": "string"
+          },
+          "showFeedbackOptions": {
+            "type": "boolean"
+          },
+          "threatLevel": {
+            "type": "string"
+          },
+          "timestamp": {
             "type": "string"
           }
         }
