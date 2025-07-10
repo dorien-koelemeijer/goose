@@ -1713,66 +1713,57 @@ impl Agent {
                                                 
                                                 if let Ok(Some(scan_result)) = security_manager.scan_content_with_type(content, crate::security::config::ContentType::ToolResult).await {
                                                     let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::ToolResult, &scan_result.threat_level);
-                                                    if matches!(action_policy, crate::security::config::ActionPolicy::BlockWithNote) {
-                                                        tracing::warn!(
+                                                    
+                                                    // Create security note if needed (for ProcessWithNote, Block, or BlockWithNote actions)
+                                                    if let Some(security_note) = security_manager.create_security_note(&scan_result, crate::security::config::ContentType::ToolResult) {
+                                                        tracing::info!(
                                                             threat_level = ?scan_result.threat_level,
+                                                            action = ?action_policy,
                                                             explanation = %scan_result.explanation,
-                                                            "Security threat detected in tool result, requesting user confirmation"
+                                                            "Security threat detected in tool result, creating security note"
                                                         );
                                                         
-                                                        // Generate unique request ID for tool result security confirmation
-                                                        let security_request_id = format!("tool_sec_{}", nanoid::nanoid!(8));
-                                                        let threat_level_str = format!("{:?}", scan_result.threat_level);
+                                                        // Create a message with the security note
+                                                        let security_note_message = Message::assistant().with_security_note(
+                                                            security_note.note_id.clone(),
+                                                            "tool_result".to_string(),
+                                                            format!("{:?}", scan_result.threat_level),
+                                                            scan_result.explanation.clone(),
+                                                            format!("{:?}", action_policy),
+                                                            security_note.show_feedback_options,
+                                                            security_note.timestamp.to_rfc3339(),
+                                                        );
                                                         
-                                                        // Store the original tool result for later processing
-                                                        let tool_result_content = serde_json::to_string(content)
-                                                            .unwrap_or_else(|_| "Failed to serialize tool result".to_string());
-                                                        {
-                                                            let mut pending_requests = self.pending_security_requests.lock().await;
-                                                            pending_requests.insert(security_request_id.clone(), tool_result_content);
-                                                        }
-                                                        
-                                                        // Create a security confirmation message for the tool result
-                                                        // This will be yielded as a separate message to show the confirmation UI
-                                                        let security_confirmation_message = Message::assistant()
-                                                            .with_tool_confirmation_request(
-                                                                security_request_id.clone(),
-                                                                "tool_result_security_scanner".to_string(),
-                                                                serde_json::json!({
-                                                                    "threat_level": threat_level_str,
-                                                                    "explanation": scan_result.explanation,
-                                                                    "tool_request_id": request_id,
-                                                                    "scan_type": "tool_result"
-                                                                }),
-                                                                Some(format!(
-                                                                    "🚨 Security Alert: Tool result contains {} threat\n\n{}\n\nThe tool execution completed, but its output contains potentially malicious content. Do you want to view this result?", 
-                                                                    threat_level_str, 
-                                                                    scan_result.explanation
-                                                                )),
+                                                        // Yield the security note message
+                                                        yield AgentEvent::Message(security_note_message);
+                                                    }
+                                                    
+                                                    // Apply the action policy
+                                                    match action_policy {
+                                                        crate::security::config::ActionPolicy::Block | 
+                                                        crate::security::config::ActionPolicy::BlockWithNote => {
+                                                            tracing::warn!(
+                                                                threat_level = ?scan_result.threat_level,
+                                                                explanation = %scan_result.explanation,
+                                                                "Blocking tool result due to security threat"
                                                             );
-                                                        
-                                                        // Yield the security confirmation message immediately
-                                                        // This will show the confirmation UI to the user
-                                                        yield AgentEvent::Message(security_confirmation_message);
-                                                        
-                                                        // For now, return a placeholder message indicating the result is pending confirmation
-                                                        // The actual result will be processed when the user confirms
-                                                        Ok(vec![Content::text(format!(
-                                                            "[SECURITY] Tool result pending user confirmation due to detected {} threat: {}",
-                                                            threat_level_str,
-                                                            scan_result.explanation
-                                                        ))])
-                                                    } else if security_manager.should_block_for_type(&scan_result, crate::security::config::ContentType::ToolResult) {
-                                                        tracing::error!(
-                                                            threat_level = ?scan_result.threat_level,
-                                                            explanation = %scan_result.explanation,
-                                                            "Security threat detected in tool result, sanitizing"
-                                                        );
-                                                        // Replace with safe content
-                                                        let safe_content = security_manager.get_safe_content(content, &scan_result);
-                                                        Ok(safe_content)
-                                                    } else {
-                                                        output
+                                                            // Replace with safe content
+                                                            let safe_content = security_manager.get_safe_content(content, &scan_result);
+                                                            Ok(safe_content)
+                                                        },
+                                                        crate::security::config::ActionPolicy::ProcessWithNote => {
+                                                            tracing::info!(
+                                                                threat_level = ?scan_result.threat_level,
+                                                                explanation = %scan_result.explanation,
+                                                                "Processing tool result with security note"
+                                                            );
+                                                            // Process the content but note was already created above
+                                                            output
+                                                        },
+                                                        _ => {
+                                                            // Process, LogOnly, or other policies - just pass through
+                                                            output
+                                                        }
                                                     }
                                                 } else {
                                                     output
