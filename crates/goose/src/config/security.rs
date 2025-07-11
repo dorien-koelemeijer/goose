@@ -89,13 +89,13 @@ impl SecuritySettings {
             }),
             
             tool_results: Some(ContentTypeConfig {
-                confidence_threshold: None, // Use global default
+                confidence_threshold: Some(0.3), // Use global default
                 scan_threshold: None, // Use global default
                 action_policy: None, // Use severity-specific policies
                 low_action: Some(ActionPolicy::Process),
-                medium_action: Some(ActionPolicy::ProcessWithNote),
-                high_action: Some(ActionPolicy::ProcessWithNote),
-                critical_action: Some(ActionPolicy::Block),
+                medium_action: Some(ActionPolicy::BlockWithNote),
+                high_action: Some(ActionPolicy::BlockWithNote),
+                critical_action: Some(ActionPolicy::BlockWithNote),
             }),
             
             extensions: Some(ContentTypeConfig {

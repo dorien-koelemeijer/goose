@@ -275,14 +275,15 @@ impl Agent {
         tool_call: mcp_core::tool::ToolCall,
         request_id: String,
     ) -> (String, Result<ToolCallResult, ToolError>) {
-        // Security scanning: Pre-scan file content for file-reading tools
+        // 🔒 SECURITY GATE: Pre-execution security scanning
         if let Some(security_manager) = &*self.security_manager.lock().await {
+            // 1. Pre-scan file content for file-reading tools
             if self.is_file_reading_tool(&tool_call) {
                 if let Some(file_path) = self.extract_file_path_from_tool_call(&tool_call) {
                     tracing::info!(
                         tool_name = %tool_call.name,
                         file_path = %file_path,
-                        "Pre-scanning file content before tool execution"
+                        "🔒 SECURITY: Pre-scanning file content before tool execution"
                     );
                     
                     // Try to read and scan the file content before executing the tool
@@ -321,7 +322,7 @@ impl Agent {
                                     tool_name = %tool_call.name,
                                     file_path = %file_path,
                                     threat_level = ?scan_result.threat_level,
-                                    "File pre-scan completed - file is safe, proceeding with tool execution"
+                                    "🔒 SECURITY: File pre-scan completed - file is safe, proceeding with tool execution"
                                 );
                             }
                         }
@@ -330,7 +331,7 @@ impl Agent {
                             tracing::info!(
                                 tool_name = %tool_call.name,
                                 file_path = %file_path,
-                                "File pre-scan completed - safe to proceed"
+                                "🔒 SECURITY: File pre-scan completed - safe to proceed"
                             );
                         }
                         Err(e) => {
@@ -340,10 +341,80 @@ impl Agent {
                                 tool_name = %tool_call.name,
                                 file_path = %file_path,
                                 error = %e,
-                                "Failed to pre-scan file content, continuing with tool execution"
+                                "🔒 SECURITY: Failed to pre-scan file content, continuing with tool execution"
                             );
                         }
                     }
+                }
+            }
+
+            // 2. Pre-scan tool arguments for malicious content
+            tracing::info!(
+                tool_name = %tool_call.name,
+                "🔒 SECURITY: Pre-scanning tool arguments before execution"
+            );
+            
+            // Create content from tool arguments for scanning
+            let tool_args_text = serde_json::to_string_pretty(&tool_call.arguments)
+                .unwrap_or_else(|_| "Failed to serialize tool arguments".to_string());
+            let tool_content_for_scanning = vec![Content::text(format!(
+                "Tool: {}\nArguments: {}",
+                tool_call.name,
+                tool_args_text
+            ))];
+            
+            match security_manager.scan_content_with_type(&tool_content_for_scanning, crate::security::config::ContentType::ToolResult).await {
+                Ok(Some(scan_result)) => {
+                    let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::ToolResult, &scan_result.threat_level);
+                    
+                    match action_policy {
+                        crate::security::config::ActionPolicy::Block | 
+                        crate::security::config::ActionPolicy::BlockWithNote => {
+                            tracing::error!(
+                                tool_name = %tool_call.name,
+                                threat_level = ?scan_result.threat_level,
+                                explanation = %scan_result.explanation,
+                                "🚨 SECURITY: Blocking tool execution due to malicious arguments"
+                            );
+                            
+                            return (
+                                request_id,
+                                Ok(ToolCallResult::from(Ok(vec![Content::text(format!(
+                                    "🚨 **Security Alert: Malicious Tool Arguments Detected**\n\n\
+                                    The tool arguments contain potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
+                                    **Tool:** {}\n\
+                                    **Threat Level:** {:?}\n\
+                                    **Details:** {}\n\n\
+                                    For your safety, this tool execution has been automatically blocked. Please review the tool arguments and try again with safe parameters.\n\n\
+                                    💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                                    tool_call.name,
+                                    scan_result.threat_level,
+                                    scan_result.explanation
+                                ))])))
+                            );
+                        }
+                        _ => {
+                            tracing::info!(
+                                tool_name = %tool_call.name,
+                                threat_level = ?scan_result.threat_level,
+                                action_policy = ?action_policy,
+                                "🔒 SECURITY: Tool arguments scanned - proceeding with execution"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        tool_name = %tool_call.name,
+                        "🔒 SECURITY: Tool arguments scanning disabled or safe"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tool_name = %tool_call.name,
+                        error = %e,
+                        "🔒 SECURITY: Failed to scan tool arguments, continuing with execution"
+                    );
                 }
             }
         }
@@ -1070,11 +1141,11 @@ impl Agent {
         // Store security note to add after AI response (for ProcessWithNote policy)
         let mut pending_security_note: Option<crate::security::config::SecurityNote> = None;
 
-        // Security scanning: scan only the latest user message for threats
+        // 🔒 SECURITY GATE: Complete content isolation for blocked messages
         if let Some(security_manager) = &*self.security_manager.lock().await {
             // Find the last user message (the new one we need to scan)
             if let Some(latest_user_message) = messages.iter().rev().find(|msg| msg.role == Role::User) {
-                tracing::info!("Starting comprehensive security scan of latest user message");
+                tracing::info!("🔒 SECURITY: Starting comprehensive security scan of latest user message");
                 
                 // Extract ALL content from the latest user message (text, files, images)
                 let mut all_content_for_scanning = Vec::new();
@@ -1145,7 +1216,7 @@ impl Agent {
                     let is_approved = approved_messages.contains(&message_hash);
                     let is_denied = denied_messages.contains(&message_hash);
                     
-                    tracing::info!("Security cache check - approved: {}, denied: {}, approved_count: {}, denied_count: {}", 
+                    tracing::info!("🔒 SECURITY: Cache check - approved: {}, denied: {}, approved_count: {}, denied_count: {}", 
                         is_approved, is_denied, approved_messages.len(), denied_messages.len());
                     
                     drop(approved_messages); // Release the locks early
@@ -1158,7 +1229,7 @@ impl Agent {
                             } else { 
                                 combined_text.clone() 
                             },
-                            "Message was previously approved by user - skipping security scan"
+                            "🔒 SECURITY: Message was previously approved by user - skipping security scan"
                         );
                         
                         // Skip security scanning entirely for approved messages
@@ -1170,8 +1241,10 @@ impl Agent {
                             } else { 
                                 combined_text.clone() 
                             },
-                            "Message was previously denied by user, blocking"
+                            "🔒 SECURITY: Message was previously denied by user - COMPLETE ISOLATION"
                         );
+                        
+                        // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
                         return Ok(Box::pin(async_stream::try_stream! {
                             yield AgentEvent::Message(
                                 Message::assistant().with_text("This message was previously blocked due to security concerns.")
@@ -1230,10 +1303,10 @@ impl Agent {
                                             tracing::error!(
                                                 threat_level = ?scan_result.threat_level,
                                                 explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, blocking"
+                                                "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking)"
                                             );
                                             
-                                            // Block with clear explanation and optional feedback
+                                            // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
                                             let security_note = security_manager.create_security_note(
                                                 &scan_result, 
                                                 crate::security::config::ContentType::UserMessage
@@ -1270,10 +1343,10 @@ impl Agent {
                                             tracing::error!(
                                                 threat_level = ?scan_result.threat_level,
                                                 explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, blocking with feedback options"
+                                                "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking with feedback)"
                                             );
                                             
-                                            // Block with clear explanation and feedback options
+                                            // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
                                             let security_note = security_manager.create_security_note(
                                                 &scan_result, 
                                                 crate::security::config::ContentType::UserMessage
@@ -1427,7 +1500,8 @@ impl Agent {
                 }
             }
             
-            // Filter out denied messages from conversation history before processing
+            // 🔒 SECURITY: Filter out denied messages from conversation history BEFORE processing
+            // This ensures the LLM never sees blocked content at all
             let denied_messages = self.denied_security_messages.lock().await;
             let original_message_count = messages.len();
             messages.retain(|message| {
@@ -1447,9 +1521,9 @@ impl Agent {
                                 } else { 
                                     combined_text.clone() 
                                 },
-                                "Filtering out denied message from conversation history"
+                                "🔒 SECURITY: COMPLETE ISOLATION - Filtering out denied message from conversation history"
                             );
-                            return false; // Remove this message
+                            return false; // Remove this message - LLM will never see it
                         }
                     }
                 }
@@ -1458,7 +1532,7 @@ impl Agent {
             drop(denied_messages);
             
             if messages.len() != original_message_count {
-                tracing::info!("Filtered out {} denied messages from conversation history", 
+                tracing::info!("🔒 SECURITY: COMPLETE ISOLATION - Filtered out {} denied messages from conversation history", 
                     original_message_count - messages.len());
             }
         }
@@ -1703,14 +1777,16 @@ impl Agent {
                                             all_install_successful = false;
                                         }
                                         
-                                        // Security scanning: scan tool results for threats
+                                        // 🔒 SECURITY: Post-execution output scanning (lighter since we pre-scanned inputs)
                                         let safe_output = if let Ok(ref content) = output {
                                             if let Some(security_manager) = &*self.security_manager.lock().await {
-                                                tracing::info!(
+                                                tracing::debug!(
                                                     request_id = %request_id,
-                                                    "Scanning tool result for security threats"
+                                                    "🔒 SECURITY: Post-execution scanning of tool output content"
                                                 );
                                                 
+                                                // Only scan output content that might contain external/untrusted data
+                                                // Since we already pre-scanned inputs, focus on output threats
                                                 if let Ok(Some(scan_result)) = security_manager.scan_content_with_type(content, crate::security::config::ContentType::ToolResult).await {
                                                     let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::ToolResult, &scan_result.threat_level);
                                                     
@@ -1720,7 +1796,7 @@ impl Agent {
                                                             threat_level = ?scan_result.threat_level,
                                                             action = ?action_policy,
                                                             explanation = %scan_result.explanation,
-                                                            "Security threat detected in tool result, creating security note"
+                                                            "🔒 SECURITY: Threat detected in tool output, creating security note"
                                                         );
                                                         
                                                         // Create a message with the security note
@@ -1738,24 +1814,24 @@ impl Agent {
                                                         yield AgentEvent::Message(security_note_message);
                                                     }
                                                     
-                                                    // Apply the action policy
+                                                    // Apply the action policy to output content
                                                     match action_policy {
                                                         crate::security::config::ActionPolicy::Block | 
                                                         crate::security::config::ActionPolicy::BlockWithNote => {
                                                             tracing::warn!(
                                                                 threat_level = ?scan_result.threat_level,
                                                                 explanation = %scan_result.explanation,
-                                                                "Blocking tool result due to security threat"
+                                                                "🚨 SECURITY: Blocking tool output due to security threat"
                                                             );
                                                             // Replace with safe content
-                                                            let safe_content = security_manager.get_safe_content(content, &scan_result);
+                                                            let safe_content = security_manager.get_safe_content(content, &scan_result, crate::security::config::ContentType::ToolResult);
                                                             Ok(safe_content)
                                                         },
                                                         crate::security::config::ActionPolicy::ProcessWithNote => {
                                                             tracing::info!(
                                                                 threat_level = ?scan_result.threat_level,
                                                                 explanation = %scan_result.explanation,
-                                                                "Processing tool result with security note"
+                                                                "🔒 SECURITY: Processing tool output with security note"
                                                             );
                                                             // Process the content but note was already created above
                                                             output

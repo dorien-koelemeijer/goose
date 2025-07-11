@@ -10,15 +10,120 @@ use std::process::Command;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
-// Helper function removed - no longer needed since unused scanners were removed
+// Simple test scanner that detects obvious threats for testing
+pub struct SimpleTestScanner {
+    confidence_threshold: f32,
+}
 
-// MistralNemoScanner removed - no longer needed
+impl SimpleTestScanner {
+    pub fn new(confidence_threshold: f32) -> Self {
+        Self {
+            confidence_threshold,
+        }
+    }
 
-// LlamaPromptGuard2Scanner removed - no longer needed
+    fn analyze_content(&self, text: &str) -> ScanResult {
+        let text_lower = text.to_lowercase();
+        
+        // Check for obvious malicious patterns
+        let malicious_patterns = [
+            "rm -rf",
+            "curl -X POST",
+            "chmod 777",
+            "sudo chmod",
+            "execute this",
+            "run this command",
+            "system(",
+            "exec(",
+            "shell_exec",
+            "eval(",
+            "ignore previous instructions",
+            "forget previous instructions",
+            "disregard",
+            "override",
+            "bypass",
+            "jailbreak",
+            "prompt injection",
+            "system prompt",
+        ];
+        
+        let mut threat_score: f32 = 0.0;
+        let mut found_patterns = Vec::new();
+        
+        for pattern in &malicious_patterns {
+            if text_lower.contains(pattern) {
+                found_patterns.push(*pattern);
+                threat_score += match *pattern {
+                    "rm -rf" | "chmod 777" | "sudo chmod" => 0.9, // Very dangerous
+                    "curl -X POST" | "execute this" | "run this command" => 0.8, // Dangerous
+                    "system(" | "exec(" | "shell_exec" | "eval(" => 0.85, // Code execution
+                    "ignore previous instructions" | "forget previous instructions" => 0.7, // Prompt injection
+                    _ => 0.5, // Suspicious
+                };
+            }
+        }
+        
+        // Cap at 1.0
+        threat_score = threat_score.min(1.0);
+        
+        let (threat_level, explanation) = if threat_score >= 0.8 {
+            (ThreatLevel::High, format!("High threat detected (score: {:.2}). Found patterns: {:?}", threat_score, found_patterns))
+        } else if threat_score >= 0.6 {
+            (ThreatLevel::Medium, format!("Medium threat detected (score: {:.2}). Found patterns: {:?}", threat_score, found_patterns))
+        } else if threat_score >= 0.3 {
+            (ThreatLevel::Low, format!("Low threat detected (score: {:.2}). Found patterns: {:?}", threat_score, found_patterns))
+        } else {
+            (ThreatLevel::Safe, format!("Content appears safe (score: {:.2})", threat_score))
+        };
+        
+        // Apply confidence threshold
+        let final_threat_level = if threat_score < self.confidence_threshold {
+            ThreatLevel::Safe
+        } else {
+            threat_level
+        };
+        
+        let final_explanation = if threat_score < self.confidence_threshold && threat_score > 0.0 {
+            format!("{} (below confidence threshold {:.2}, treating as safe)", explanation, self.confidence_threshold)
+        } else {
+            explanation
+        };
+        
+        ScanResult::with_confidence(final_threat_level, threat_score, final_explanation)
+    }
+}
 
-// LlamaPromptGuardScanner removed - no longer needed
+#[async_trait]
+impl ContentScanner for SimpleTestScanner {
+    async fn scan_content(&self, content: &[Content]) -> Result<ScanResult> {
+        let combined_content = content
+            .iter()
+            .filter_map(|c| c.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(self.analyze_content(&combined_content))
+    }
 
-// New scanner implementations
+    async fn scan_tool_result(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+        result: &[Content],
+    ) -> Result<ScanResult> {
+        let combined_content = result
+            .iter()
+            .filter_map(|c| c.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contextual_content = format!(
+            "Tool: {}\nArguments: {}\nResult: {}",
+            tool_name,
+            serde_json::to_string(arguments).unwrap_or_default(),
+            combined_content
+        );
+        Ok(self.analyze_content(&contextual_content))
+    }
+}
 
 pub struct DeepsetDebertaScanner {
     model_name: String,

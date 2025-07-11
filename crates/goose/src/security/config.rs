@@ -76,6 +76,7 @@ pub enum VotingStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ScannerType {
     None,
+    SimpleTest,             // Simple pattern-based scanner for testing
     ProtectAiDeberta, // Renamed from LlamaPromptGuard for clarity
     DeepsetDeberta, // deepset/deberta-v3-base-injection-v2 - often better precision (Python-based)
     RustDeepsetDeberta, // Fast Rust implementation of deepset/deberta-v3-base-injection using ONNX
@@ -165,27 +166,77 @@ impl SecurityConfig {
             ContentType::AgentResponse => &self.agent_responses,
         };
 
+        tracing::debug!(
+            content_type = ?content_type,
+            threat_level = ?threat_level,
+            type_config_exists = type_config.is_some(),
+            "🔒 SECURITY CONFIG: Determining action policy for threat"
+        );
+
         // Try to get severity-specific action policy first
         if let Some(config) = type_config {
+            tracing::debug!(
+                content_type = ?content_type,
+                low_action = ?config.low_action,
+                medium_action = ?config.medium_action,
+                high_action = ?config.high_action,
+                critical_action = ?config.critical_action,
+                legacy_action_policy = ?config.action_policy,
+                "🔒 SECURITY CONFIG: Available content-type-specific actions"
+            );
+
             let severity_action = match threat_level {
-                crate::security::content_scanner::ThreatLevel::Low => config.low_action.clone(),
-                crate::security::content_scanner::ThreatLevel::Medium => config.medium_action.clone(),
-                crate::security::content_scanner::ThreatLevel::High => config.high_action.clone(),
-                crate::security::content_scanner::ThreatLevel::Critical => config.critical_action.clone(),
-                crate::security::content_scanner::ThreatLevel::Safe => Some(ActionPolicy::Process),
+                crate::security::content_scanner::ThreatLevel::Low => {
+                    tracing::debug!("🔒 SECURITY CONFIG: Checking low_action: {:?}", config.low_action);
+                    config.low_action.clone()
+                },
+                crate::security::content_scanner::ThreatLevel::Medium => {
+                    tracing::debug!("🔒 SECURITY CONFIG: Checking medium_action: {:?}", config.medium_action);
+                    config.medium_action.clone()
+                },
+                crate::security::content_scanner::ThreatLevel::High => {
+                    tracing::debug!("🔒 SECURITY CONFIG: Checking high_action: {:?}", config.high_action);
+                    config.high_action.clone()
+                },
+                crate::security::content_scanner::ThreatLevel::Critical => {
+                    tracing::debug!("🔒 SECURITY CONFIG: Checking critical_action: {:?}", config.critical_action);
+                    config.critical_action.clone()
+                },
+                crate::security::content_scanner::ThreatLevel::Safe => {
+                    tracing::debug!("🔒 SECURITY CONFIG: Threat level is Safe, using Process policy");
+                    Some(ActionPolicy::Process)
+                },
             };
 
             if let Some(action) = severity_action {
+                tracing::debug!(
+                    content_type = ?content_type,
+                    threat_level = ?threat_level,
+                    selected_action = ?action,
+                    "🔒 SECURITY CONFIG: Using severity-specific action policy"
+                );
                 return action;
             }
 
             // Fall back to legacy action_policy if severity-specific not set
             if let Some(action) = config.action_policy.clone() {
+                tracing::debug!(
+                    content_type = ?content_type,
+                    threat_level = ?threat_level,
+                    selected_action = ?action,
+                    "🔒 SECURITY CONFIG: Using legacy content-type action policy"
+                );
                 return action;
             }
         }
 
         // Fall back to global action policy
+        tracing::debug!(
+            content_type = ?content_type,
+            threat_level = ?threat_level,
+            selected_action = ?self.action_policy,
+            "🔒 SECURITY CONFIG: Using global action policy (fallback)"
+        );
         self.action_policy.clone()
     }
 }
