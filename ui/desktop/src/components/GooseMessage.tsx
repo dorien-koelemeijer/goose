@@ -13,10 +13,12 @@ import {
   getToolRequests,
   getToolResponses,
   getToolConfirmationContent,
+  getSecurityNotes,
   createToolErrorResponseMessage,
 } from '../types/message';
 import ToolCallConfirmation from './ToolCallConfirmation';
 import MessageCopyLink from './MessageCopyLink';
+import SecurityNote from './SecurityNote';
 import { NotificationEvent } from '../hooks/useMessageStream';
 
 interface GooseMessageProps {
@@ -86,6 +88,9 @@ export default function GooseMessage({
 
   const toolConfirmationContent = getToolConfirmationContent(message);
   const hasToolConfirmation = toolConfirmationContent !== undefined;
+
+  // Get security notes from the message
+  const securityNotes = getSecurityNotes(message);
 
   // Find tool responses that correspond to the tool requests in this message
   const toolResponsesMap = useMemo(() => {
@@ -208,6 +213,15 @@ export default function GooseMessage({
             toolConfirmationId={toolConfirmationContent.id}
             toolName={toolConfirmationContent.toolName}
           />
+        )}
+
+        {/* Render security notes */}
+        {securityNotes.length > 0 && (
+          <div className="security-notes">
+            {securityNotes.map((note, index) => (
+              <SecurityNote key={`${note.findingId}-${index}`} note={note} />
+            ))}
+          </div>
         )}
       </div>
 

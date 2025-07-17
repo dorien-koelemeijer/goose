@@ -88,6 +88,17 @@ const addPaths = (
       path.join(process.cwd(), 'bin', executableName),
       path.join(process.cwd(), '..', '..', 'target', 'release', executableName)
     );
+
+    // For development, also try to use system binaries if they're common tools
+    if ((executableName === 'npx' || executableName === 'uvx') && !isWindows) {
+      // Add common system locations for these tools
+      possiblePaths.push(
+        `/Applications/Goose.app/Contents/Resources/bin/${executableName}`, // Current system location
+        `/usr/local/bin/${executableName}`,
+        `/opt/homebrew/bin/${executableName}`,
+        `/usr/bin/${executableName}`
+      );
+    }
   } else {
     possiblePaths.push(
       path.join(process.resourcesPath, 'bin', executableName),

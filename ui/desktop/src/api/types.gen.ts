@@ -347,7 +347,7 @@ export type SecurityNoteMessage = {
     actionTaken: string;
     contentType: string;
     explanation: string;
-    noteId: string;
+    findingId: string;
     showFeedbackOptions: boolean;
     threatLevel: string;
     timestamp: string;

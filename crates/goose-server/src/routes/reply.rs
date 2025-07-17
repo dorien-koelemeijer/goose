@@ -436,7 +436,7 @@ pub struct SecurityConfirmationRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SecurityFeedbackRequest {
     pub note_id: String,
-    pub feedback_type: String, // "false_positive", "missed_threat", "correct_flag"
+    pub feedback_type: String, // "false_positive", "missed_threat", "correct_flag", "other"
     pub user_comment: Option<String>,
 }
 
@@ -512,6 +512,7 @@ pub async fn submit_security_feedback(
         "false_positive" => goose::security::config::FeedbackType::FalsePositive,
         "missed_threat" => goose::security::config::FeedbackType::MissedThreat,
         "correct_flag" => goose::security::config::FeedbackType::CorrectFlag,
+        "other" => goose::security::config::FeedbackType::Other,
         _ => {
             tracing::warn!("Unknown feedback type: {}", request.feedback_type);
             return Err(StatusCode::BAD_REQUEST);

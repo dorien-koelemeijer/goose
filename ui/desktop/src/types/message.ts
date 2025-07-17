@@ -83,6 +83,17 @@ export interface SummarizationRequestedContent {
   msg: string;
 }
 
+export interface SecurityNoteContent {
+  type: 'securityNote';
+  findingId: string;
+  contentType: string;
+  threatLevel: string;
+  explanation: string;
+  actionTaken: string;
+  showFeedbackOptions: boolean;
+  timestamp: string;
+}
+
 export type MessageContent =
   | TextContent
   | ImageContent
@@ -90,7 +101,8 @@ export type MessageContent =
   | ToolResponseMessageContent
   | ToolConfirmationRequestMessageContent
   | ContextLengthExceededContent
-  | SummarizationRequestedContent;
+  | SummarizationRequestedContent
+  | SecurityNoteContent;
 
 export interface Message {
   id?: string;
@@ -222,6 +234,12 @@ export function getToolConfirmationContent(
   return message.content.find(
     (content): content is ToolConfirmationRequestMessageContent =>
       content.type === 'toolConfirmationRequest'
+  );
+}
+
+export function getSecurityNotes(message: Message): SecurityNoteContent[] {
+  return message.content.filter(
+    (content): content is SecurityNoteContent => content.type === 'securityNote'
   );
 }
 

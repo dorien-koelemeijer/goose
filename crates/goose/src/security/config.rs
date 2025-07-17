@@ -255,11 +255,12 @@ pub enum FeedbackType {
     FalsePositive,  // User says this was incorrectly flagged
     MissedThreat,   // User says this should have been flagged
     CorrectFlag,    // User confirms the flag was correct
+    Other,          // User provided general feedback/comment
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityNote {
-    pub note_id: String,
+    pub finding_id: String,
     pub content_type: ContentType,
     pub threat_level: crate::security::content_scanner::ThreatLevel,
     pub explanation: String,

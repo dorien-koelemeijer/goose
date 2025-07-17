@@ -2061,7 +2061,7 @@
       "SecurityNoteMessage": {
         "type": "object",
         "required": [
-          "noteId",
+          "findingId",
           "contentType",
           "threatLevel",
           "explanation",
@@ -2079,7 +2079,7 @@
           "explanation": {
             "type": "string"
           },
-          "noteId": {
+          "findingId": {
             "type": "string"
           },
           "showFeedbackOptions": {

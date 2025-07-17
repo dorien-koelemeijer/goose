@@ -81,7 +81,7 @@ pub struct SecurityConfirmationRequest {
 #[serde(rename_all = "camelCase")]
 #[derive(ToSchema)]
 pub struct SecurityNoteMessage {
-    pub note_id: String,
+    pub finding_id: String,
     pub content_type: String, // "user_message", "file_content", etc.
     pub threat_level: String, // "low", "medium", "high", "critical"
     pub explanation: String,
@@ -199,7 +199,7 @@ impl MessageContent {
     }
 
     pub fn security_note(
-        note_id: String,
+        finding_id: String,
         content_type: String,
         threat_level: String,
         explanation: String,
@@ -208,7 +208,7 @@ impl MessageContent {
         timestamp: String,
     ) -> Self {
         MessageContent::SecurityNote(SecurityNoteMessage {
-            note_id,
+            finding_id,
             content_type,
             threat_level,
             explanation,
@@ -469,7 +469,7 @@ impl Message {
     /// Add a security note to the message
     pub fn with_security_note(
         self,
-        note_id: String,
+        finding_id: String,
         content_type: String,
         threat_level: String,
         explanation: String,
@@ -478,7 +478,7 @@ impl Message {
         timestamp: String,
     ) -> Self {
         self.with_content(MessageContent::security_note(
-            note_id,
+            finding_id,
             content_type,
             threat_level,
             explanation,

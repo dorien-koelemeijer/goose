@@ -25,35 +25,49 @@ impl SecurityFeedbackManager {
         // Enhance explanation with feedback message if feedback options are available
         let enhanced_explanation = if show_feedback_options {
             format!(
-                "{}\n\n💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                "{}\n\n💬 **Feedback options available!**",
                 scan_result.explanation
             )
         } else {
             scan_result.explanation.clone()
         };
 
-        SecurityNote {
-            note_id: Uuid::new_v4().to_string(),
+        let security_note = SecurityNote {
+            finding_id: Uuid::new_v4().to_string(),
             content_type,
             threat_level: scan_result.threat_level.clone(),
             explanation: enhanced_explanation,
-            action_taken,
+            action_taken: action_taken.clone(),
             show_feedback_options,
             timestamp: chrono::Utc::now(),
-        }
+        };
+
+        // Log the initial security finding
+        tracing::info!(
+            finding_id = %security_note.finding_id,
+            content_type = ?content_type,
+            threat_level = ?scan_result.threat_level,
+            action_taken = ?action_taken,
+            confidence = scan_result.confidence,
+            explanation = %scan_result.explanation,
+            show_feedback_options = show_feedback_options,
+            "Security finding created"
+        );
+
+        security_note
     }
 
     /// Log user feedback (simple logging approach for now)
     pub fn log_user_feedback(
         &self,
-        note_id: &str,
+        finding_id: &str,
         feedback_type: FeedbackType,
         content_type: ContentType,
         threat_level: &crate::security::content_scanner::ThreatLevel,
         user_comment: Option<&str>,
     ) {
         tracing::info!(
-            note_id = %note_id,
+            finding_id = %finding_id,
             feedback_type = ?feedback_type,
             content_type = ?content_type,
             threat_level = ?threat_level,

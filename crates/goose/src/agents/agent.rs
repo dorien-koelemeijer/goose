@@ -309,8 +309,7 @@ impl Agent {
                                         **File:** {}\n\
                                         **Threat Level:** {:?}\n\
                                         **Details:** {}\n\n\
-                                        For your safety, access to this file has been automatically blocked. Please review the file content and ensure it's safe before trying again.\n\n\
-                                        💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                                        For your safety, access to this file has been automatically blocked. Please review the file content and ensure it's safe before trying again.",
                                         file_path,
                                         scan_result.threat_level,
                                         scan_result.explanation
@@ -385,8 +384,7 @@ impl Agent {
                                     **Tool:** {}\n\
                                     **Threat Level:** {:?}\n\
                                     **Details:** {}\n\n\
-                                    For your safety, this tool execution has been automatically blocked. Please review the tool arguments and try again with safe parameters.\n\n\
-                                    💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                                    For your safety, this tool execution has been automatically blocked. Please review the tool arguments and try again with safe parameters.",
                                     tool_call.name,
                                     scan_result.threat_level,
                                     scan_result.explanation
@@ -965,14 +963,14 @@ impl Agent {
     /// Log security feedback from the user (simple logging approach)
     pub async fn log_security_feedback(
         &self,
-        note_id: &str,
+        finding_id: &str,
         feedback_type: crate::security::config::FeedbackType,
         user_comment: Option<&str>,
     ) {
         // For now, we just log the feedback
         // In the future, this could be enhanced to store feedback for model improvement
         tracing::info!(
-            note_id = %note_id,
+            finding_id = %finding_id,
             feedback_type = ?feedback_type,
             user_comment = ?user_comment,
             "User provided security feedback"
@@ -983,7 +981,7 @@ impl Agent {
             // We don't have the full context here, so we'll use placeholder values
             // In a more complete implementation, we'd store note context and retrieve it
             security_manager.log_user_feedback(
-                note_id,
+                finding_id,
                 feedback_type,
                 crate::security::config::ContentType::UserMessage, // Placeholder
                 &crate::security::content_scanner::ThreatLevel::Medium, // Placeholder
@@ -1282,8 +1280,7 @@ impl Agent {
                                                     Your uploaded file contains potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
                                                     **Threat Level:** {:?}\n\
                                                     **Details:** {}\n\n\
-                                                    For your safety, this request has been automatically blocked. Please review your file content and try again with a safe file.\n\n\
-                                                    💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                                                    For your safety, this request has been automatically blocked. Please review your file content and try again with a safe file.",
                                                     scan_result.threat_level,
                                                     scan_result.explanation
                                                 ))
@@ -1325,7 +1322,7 @@ impl Agent {
                                             // Add security note if available
                                             if let Some(note) = security_note {
                                                 response_message = response_message.with_security_note(
-                                                    note.note_id,
+                                                    note.finding_id,
                                                     format!("{:?}", note.content_type).to_lowercase(),
                                                     format!("{:?}", note.threat_level).to_lowercase(),
                                                     note.explanation,
@@ -1357,8 +1354,7 @@ impl Agent {
                                                 Your message contains potentially malicious content and has been blocked for security reasons.\n\n\
                                                 **Threat Level:** {:?}\n\
                                                 **Details:** {}\n\n\
-                                                Please rephrase your request without potentially harmful content.\n\n\
-                                                💬 **Feedback options will be available soon** - you'll be able to report if this was incorrectly flagged.",
+                                                Please rephrase your request without potentially harmful content.",
                                                 scan_result.threat_level,
                                                 scan_result.explanation
                                             ));
@@ -1366,7 +1362,7 @@ impl Agent {
                                             // Add security note if available
                                             if let Some(note) = security_note {
                                                 response_message = response_message.with_security_note(
-                                                    note.note_id,
+                                                    note.finding_id,
                                                     format!("{:?}", note.content_type).to_lowercase(),
                                                     format!("{:?}", note.threat_level).to_lowercase(),
                                                     note.explanation,
@@ -1646,7 +1642,7 @@ impl Agent {
                         // Add security note if we have one (for ProcessWithNote policy)
                         if let Some(security_note) = pending_security_note.take() {
                             let security_note_message = Message::assistant().with_security_note(
-                                security_note.note_id,
+                                security_note.finding_id,
                                 format!("{:?}", security_note.content_type).to_lowercase(),
                                 format!("{:?}", security_note.threat_level).to_lowercase(),
                                 security_note.explanation,
@@ -1801,7 +1797,7 @@ impl Agent {
                                                         
                                                         // Create a message with the security note
                                                         let security_note_message = Message::assistant().with_security_note(
-                                                            security_note.note_id.clone(),
+                                                            security_note.finding_id.clone(),
                                                             "tool_result".to_string(),
                                                             format!("{:?}", scan_result.threat_level),
                                                             scan_result.explanation.clone(),
