@@ -1306,7 +1306,8 @@ impl Agent {
                                             // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
                                             let security_note = security_manager.create_security_note(
                                                 &scan_result, 
-                                                crate::security::config::ContentType::UserMessage
+                                                crate::security::config::ContentType::UserMessage,
+                                                &combined_text,
                                             );
                                             
                                             let mut response_message = Message::assistant().with_text(format!(
@@ -1346,7 +1347,8 @@ impl Agent {
                                             // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
                                             let security_note = security_manager.create_security_note(
                                                 &scan_result, 
-                                                crate::security::config::ContentType::UserMessage
+                                                crate::security::config::ContentType::UserMessage,
+                                                &combined_text,
                                             );
                                             
                                             let mut response_message = Message::assistant().with_text(format!(
@@ -1386,7 +1388,8 @@ impl Agent {
                                             // Create and store the security note to add after the AI response
                                             if let Some(note) = security_manager.create_security_note(
                                                 &scan_result, 
-                                                crate::security::config::ContentType::UserMessage
+                                                crate::security::config::ContentType::UserMessage,
+                                                &combined_text,
                                             ) {
                                                 pending_security_note = Some(note);
                                             }
@@ -1787,7 +1790,11 @@ impl Agent {
                                                     let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::ToolResult, &scan_result.threat_level);
                                                     
                                                     // Create security note if needed (for ProcessWithNote, Block, or BlockWithNote actions)
-                                                    if let Some(security_note) = security_manager.create_security_note(&scan_result, crate::security::config::ContentType::ToolResult) {
+                                                    let content_text = content.iter()
+                                                        .filter_map(|c| c.as_text())
+                                                        .collect::<Vec<_>>()
+                                                        .join("\n");
+                                                    if let Some(security_note) = security_manager.create_security_note(&scan_result, crate::security::config::ContentType::ToolResult, &content_text) {
                                                         tracing::info!(
                                                             threat_level = ?scan_result.threat_level,
                                                             action = ?action_policy,

@@ -625,6 +625,7 @@ impl SecurityManager {
         &self,
         scan_result: &ScanResult,
         content_type: ContentType,
+        content_text: &str,
     ) -> Option<config::SecurityNote> {
         if !self.is_enabled() {
             return None;
@@ -645,6 +646,7 @@ impl SecurityManager {
                     scan_result,
                     action_taken,
                     show_feedback_options,
+                    content_text, // Pass the content text for training data
                 ))
             }
             _ => None,
@@ -672,6 +674,24 @@ impl SecurityManager {
     /// Get the action policy for a specific threat level and content type
     pub fn get_action_for_threat(&self, content_type: ContentType, threat_level: &ThreatLevel) -> ActionPolicy {
         self.config.get_action_for_threat(content_type, threat_level)
+    }
+
+    /// Export training data in HuggingFace format
+    pub fn export_huggingface_training_data(&self, output_path: &str) -> Result<feedback_manager::HuggingFaceExportStats, anyhow::Error> {
+        self.feedback_manager.export_huggingface_training_data(output_path)
+            .map_err(|e| anyhow::anyhow!("Failed to export HuggingFace training data: {}", e))
+    }
+
+    /// Export only entries with user feedback for focused fine-tuning
+    pub fn export_feedback_only_training_data(&self, output_path: &str) -> Result<feedback_manager::HuggingFaceExportStats, anyhow::Error> {
+        self.feedback_manager.export_feedback_only_training_data(output_path)
+            .map_err(|e| anyhow::anyhow!("Failed to export feedback-only training data: {}", e))
+    }
+
+    /// Get raw training data for analysis
+    pub fn export_raw_training_data(&self) -> Result<Vec<feedback_manager::TrainingDataEntry>, anyhow::Error> {
+        self.feedback_manager.export_training_data()
+            .map_err(|e| anyhow::anyhow!("Failed to export raw training data: {}", e))
     }
 
     pub fn get_safe_content(&self, original: &[Content], scan_result: &ScanResult, content_type: ContentType) -> Vec<Content> {
