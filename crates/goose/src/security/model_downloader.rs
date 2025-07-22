@@ -44,19 +44,20 @@ impl ModelDownloader {
 
         tracing::info!(
             model = %model_info.hf_model_name,
-            "Model not cached, downloading and converting..."
+            "🔒 Goose is being set up, this could take up to a minute…"
         );
 
         // Create cache directory if it doesn't exist
         fs::create_dir_all(&self.cache_dir).await?;
 
-        // Download and convert the model
+        // Download and convert the model - this blocks until complete
         self.download_and_convert_model(model_info).await?;
 
         // Verify the files were created
         if !model_path.exists() || !tokenizer_path.exists() {
             return Err(anyhow!(
-                "Model conversion completed but files not found at expected paths"
+                "Model conversion completed but files not found at expected paths. Model: {:?}, Tokenizer: {:?}",
+                model_path, tokenizer_path
             ));
         }
 
@@ -64,7 +65,7 @@ impl ModelDownloader {
             model = %model_info.hf_model_name,
             model_path = ?model_path,
             tokenizer_path = ?tokenizer_path,
-            "Successfully downloaded and converted model"
+            "✅ Successfully downloaded and converted model"
         );
 
         Ok((model_path, tokenizer_path))
@@ -241,10 +242,27 @@ def convert_model_to_onnx(model_name: str, output_dir: str):
             }}
         )
 
-        # Save tokenizer
-        tokenizer_filename = "tokenizer.json"
+        # Save tokenizer with model-specific filename
+        tokenizer_filename = model_name.replace("/", "_") + "_tokenizer.json"
         tokenizer_path = os.path.join(output_dir, tokenizer_filename)
-        tokenizer.save_pretrained(output_dir, legacy_format=False)
+        
+        # First save to temp directory to get the tokenizer.json file
+        temp_dir = os.path.join(output_dir, "temp_tokenizer")
+        tokenizer.save_pretrained(temp_dir, legacy_format=False)
+        
+        # Copy the tokenizer.json file to the expected location with model-specific name
+        import shutil
+        temp_tokenizer_json = os.path.join(temp_dir, "tokenizer.json")
+        if os.path.exists(temp_tokenizer_json):
+            shutil.copy2(temp_tokenizer_json, tokenizer_path)
+            # Clean up temp directory
+            shutil.rmtree(temp_dir)
+        else:
+            print(f"   Warning: tokenizer.json not found in {{temp_dir}}")
+            # Fallback: save the entire tokenizer directory
+            tokenizer_dir = os.path.join(output_dir, model_name.replace("/", "_") + "_tokenizer")
+            tokenizer.save_pretrained(tokenizer_dir, legacy_format=False)
+            print(f"   Saved tokenizer to directory: {{tokenizer_dir}}")
 
         print(f"✅ Successfully converted {{model_name}}")
         print(f"   Model: {{model_path}}")
@@ -312,7 +330,7 @@ impl ModelInfo {
         Self {
             hf_model_name: "deepset/deberta-v3-base-injection".to_string(),
             onnx_filename: "deepset_deberta-v3-base-injection.onnx".to_string(),
-            tokenizer_filename: "tokenizer.json".to_string(),
+            tokenizer_filename: "deepset_deberta-v3-base-injection_tokenizer.json".to_string(),
         }
     }
 
@@ -320,7 +338,7 @@ impl ModelInfo {
         Self {
             hf_model_name: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
             onnx_filename: "protectai_deberta-v3-base-prompt-injection-v2.onnx".to_string(),
-            tokenizer_filename: "tokenizer.json".to_string(),
+            tokenizer_filename: "protectai_deberta-v3-base-prompt-injection-v2_tokenizer.json".to_string(),
         }
     }
 }
