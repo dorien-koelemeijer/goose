@@ -52,12 +52,12 @@ impl SecuritySettings {
                 member_configs: vec![
                     EnsembleMember {
                         scanner_type: ScannerType::RustDeepsetDeberta,
-                        confidence_threshold: 0.7,
-                        weight: 0.1, // Low weight - only contributes when ProtectAI is uncertain
+                        confidence_threshold: 0.95, // Much higher - only flag when extremely confident
+                        weight: 0.1, // Very low weight - minimal influence on final decision
                     },
                     EnsembleMember {
                         scanner_type: ScannerType::RustProtectAiDeberta,
-                        confidence_threshold: 0.5,
+                        confidence_threshold: 0.5, // Keep reasonable threshold
                         weight: 0.9, // High weight - ProtectAI drives the decision
                     },
                 ],
@@ -69,7 +69,7 @@ impl SecuritySettings {
             
             // Hardcoded content-type-specific policies
             user_messages: Some(ContentTypeConfig {
-                confidence_threshold: None, // Use global default
+                confidence_threshold: None, // Use global default (0.5)
                 scan_threshold: None, // Use global default
                 action_policy: None, // Use severity-specific policies
                 low_action: Some(ActionPolicy::Process),
@@ -79,7 +79,7 @@ impl SecuritySettings {
             }),
             
             file_content: Some(ContentTypeConfig {
-                confidence_threshold: Some(0.4), // More sensitive for files
+                confidence_threshold: Some(0.45), // Slightly more sensitive for files but not too low
                 scan_threshold: None, // Use global default
                 action_policy: None, // Use severity-specific policies
                 low_action: Some(ActionPolicy::ProcessWithNote),
@@ -89,7 +89,7 @@ impl SecuritySettings {
             }),
             
             tool_results: Some(ContentTypeConfig {
-                confidence_threshold: Some(0.3), // Use global default
+                confidence_threshold: Some(0.4), // Reasonable threshold for tool results
                 scan_threshold: None, // Use global default
                 action_policy: None, // Use severity-specific policies
                 low_action: Some(ActionPolicy::Process),
@@ -99,7 +99,7 @@ impl SecuritySettings {
             }),
             
             extensions: Some(ContentTypeConfig {
-                confidence_threshold: Some(0.35), // Very sensitive for extensions
+                confidence_threshold: Some(0.5), // Keep extensions sensitive but reasonable
                 scan_threshold: Some(ThreatThreshold::Low),
                 action_policy: None, // Use severity-specific policies
                 low_action: Some(ActionPolicy::BlockWithNote),
