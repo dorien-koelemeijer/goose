@@ -90,43 +90,6 @@ impl Agent {
         format!("{:x}", hasher.finalize())
     }
 
-    /// Check if a message is obviously safe and doesn't need security scanning
-    fn is_obviously_safe_message(text: &str) -> bool {
-        let text_lower = text.to_lowercase();
-        let text_len = text.len();
-        
-        // Very short messages with only safe characters
-        if text_len <= 15 && text.chars().all(|c| c.is_alphabetic() || c.is_whitespace() || ".,!?👋🎉".contains(c)) {
-            return true;
-        }
-        
-        // Common greetings and safe patterns
-        let safe_patterns = [
-            "hey", "hi", "hello", "hiya", "heya", "heyy", "heyyy",
-            "good morning", "good afternoon", "good evening",
-            "how are you", "what's up", "whats up",
-            "thanks", "thank you", "thx",
-            "ok", "okay", "sure", "yes", "no",
-            "goose", "nice", "great", "awesome",
-            "👋", "🎉", "😊", "🙂", "😄",
-        ];
-        
-        // Check if the message is primarily composed of safe patterns
-        if safe_patterns.iter().any(|pattern| {
-            text_lower.contains(pattern) && 
-            text_len <= 50 && // Keep it short to avoid false negatives
-            !text_lower.contains("ignore") && 
-            !text_lower.contains("forget") &&
-            !text_lower.contains("system") &&
-            !text_lower.contains("prompt") &&
-            !text_lower.contains("instruction")
-        }) {
-            return true;
-        }
-        
-        false
-    }
-
     pub fn new() -> Self {
         // Create channels with buffer size 32 (adjust if needed)
         let (confirm_tx, confirm_rx) = mpsc::channel(32);
@@ -1249,251 +1212,238 @@ impl Agent {
                             );
                         }));
                     } else {
-                        // Only scan messages that haven't been approved or denied
-                        
-                        // Skip scanning obviously safe messages to reduce false positives (only for text-only messages)
-                        let is_obviously_safe = !has_file_content && !has_image_content && 
-                            text_contents.len() == 1 && 
-                            Self::is_obviously_safe_message(&text_contents[0]);
-                        
-                        if !is_obviously_safe {
-                            tracing::info!(
-                                "Scanning user message content for security threats (including files and images)"
-                            );
-                            
-                            match security_manager.scan_content_with_type(&all_content_for_scanning, crate::security::config::ContentType::UserMessage).await {
-                                Ok(Some(scan_result)) => {
-                                    // For file content, always auto-block without user confirmation
-                                    // Users may not know what's in files, so it's safer to block automatically
-                                    let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::UserMessage, &scan_result.threat_level);
-                                    if has_file_content && matches!(action_policy, crate::security::config::ActionPolicy::Block | crate::security::config::ActionPolicy::BlockWithNote) {
+
+
+                        tracing::info!(
+                            "Scanning user message content for security threats (including files and images)"
+                        );
+
+                        match security_manager.scan_content_with_type(&all_content_for_scanning, crate::security::config::ContentType::UserMessage).await {
+                            Ok(Some(scan_result)) => {
+                                // For file content, always auto-block without user confirmation
+                                // Users may not know what's in files, so it's safer to block automatically
+                                let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::UserMessage, &scan_result.threat_level);
+                                if has_file_content && matches!(action_policy, crate::security::config::ActionPolicy::Block | crate::security::config::ActionPolicy::BlockWithNote) {
+                                    tracing::error!(
+                                        threat_level = ?scan_result.threat_level,
+                                        explanation = %scan_result.explanation,
+                                        "Security threat detected in uploaded file content - auto-blocking without user confirmation"
+                                    );
+
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(format!(
+                                                "🚨 **Security Alert: Malicious File Content Detected**\n\n\
+                                                Your uploaded file contains potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
+                                                **Threat Level:** {:?}\n\
+                                                **Details:** {}\n\n\
+                                                For your safety, this request has been automatically blocked. Please review your file content and try again with a safe file.",
+                                                scan_result.threat_level,
+                                                scan_result.explanation
+                                            ))
+                                        );
+                                    }));
+                                }
+
+                                // NEW SMOOTH PROCESSING FLOW 🎯
+                                // Get the action policy for this threat level and content type
+                                let action_policy = security_manager.get_action_for_threat(
+                                    crate::security::config::ContentType::UserMessage,
+                                    &scan_result.threat_level
+                                );
+
+                                match action_policy {
+                                    crate::security::config::ActionPolicy::Block => {
                                         tracing::error!(
                                             threat_level = ?scan_result.threat_level,
                                             explanation = %scan_result.explanation,
-                                            "Security threat detected in uploaded file content - auto-blocking without user confirmation"
+                                            "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking)"
                                         );
-                                        
+
+                                        // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
+                                        let security_note = security_manager.create_security_note(
+                                            &scan_result,
+                                            crate::security::config::ContentType::UserMessage,
+                                            &combined_text,
+                                        );
+
+                                        let mut response_message = Message::assistant().with_text(format!(
+                                            "🚨 **Security Alert: Request Blocked**\n\n\
+                                            Your message contains potentially malicious content and has been blocked for security reasons.\n\n\
+                                            **Threat Level:** {:?}\n\
+                                            **Details:** {}\n\n\
+                                            Please rephrase your request without potentially harmful content.",
+                                            scan_result.threat_level,
+                                            scan_result.explanation
+                                        ));
+
+                                        // Add security note if available
+                                        if let Some(note) = security_note {
+                                            response_message = response_message.with_security_note(
+                                                note.finding_id,
+                                                format!("{:?}", note.content_type).to_lowercase(),
+                                                format!("{:?}", note.threat_level).to_lowercase(),
+                                                note.explanation,
+                                                format!("{:?}", note.action_taken).to_lowercase(),
+                                                note.show_feedback_options,
+                                                note.timestamp.to_rfc3339(),
+                                            );
+                                        }
+
                                         return Ok(Box::pin(async_stream::try_stream! {
-                                            yield AgentEvent::Message(
-                                                Message::assistant().with_text(format!(
-                                                    "🚨 **Security Alert: Malicious File Content Detected**\n\n\
-                                                    Your uploaded file contains potentially malicious content that could be used for prompt injection or other security attacks.\n\n\
-                                                    **Threat Level:** {:?}\n\
-                                                    **Details:** {}\n\n\
-                                                    For your safety, this request has been automatically blocked. Please review your file content and try again with a safe file.",
-                                                    scan_result.threat_level,
+                                            yield AgentEvent::Message(response_message);
+                                        }));
+                                    }
+                                    crate::security::config::ActionPolicy::BlockWithNote => {
+                                        tracing::error!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking with feedback)"
+                                        );
+
+                                        // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
+                                        let security_note = security_manager.create_security_note(
+                                            &scan_result,
+                                            crate::security::config::ContentType::UserMessage,
+                                            &combined_text,
+                                        );
+
+                                        let mut response_message = Message::assistant().with_text(format!(
+                                            "🚨 **Security Alert: Request Blocked**\n\n\
+                                            Your message contains potentially malicious content and has been blocked for security reasons.\n\n\
+                                            **Threat Level:** {:?}\n\
+                                            **Details:** {}\n\n\
+                                            Please rephrase your request without potentially harmful content.",
+                                            scan_result.threat_level,
+                                            scan_result.explanation
+                                        ));
+
+                                        // Add security note if available
+                                        if let Some(note) = security_note {
+                                            response_message = response_message.with_security_note(
+                                                note.finding_id,
+                                                format!("{:?}", note.content_type).to_lowercase(),
+                                                format!("{:?}", note.threat_level).to_lowercase(),
+                                                note.explanation,
+                                                format!("{:?}", note.action_taken).to_lowercase(),
+                                                note.show_feedback_options,
+                                                note.timestamp.to_rfc3339(),
+                                            );
+                                        }
+
+                                        return Ok(Box::pin(async_stream::try_stream! {
+                                            yield AgentEvent::Message(response_message);
+                                        }));
+                                    }
+                                    crate::security::config::ActionPolicy::ProcessWithNote => {
+                                        tracing::info!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "Security threat detected in user message, processing with note"
+                                        );
+
+                                        // Create and store the security note to add after the AI response
+                                        if let Some(note) = security_manager.create_security_note(
+                                            &scan_result,
+                                            crate::security::config::ContentType::UserMessage,
+                                            &combined_text,
+                                        ) {
+                                            pending_security_note = Some(note);
+                                        }
+                                        // Continue processing - the note will be added after the AI response
+                                    }
+                                    crate::security::config::ActionPolicy::Process => {
+                                        tracing::info!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "Security threat detected in user message, processing silently"
+                                        );
+                                        // Continue processing silently
+                                    }
+                                    crate::security::config::ActionPolicy::LogOnly => {
+                                        tracing::info!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "Security threat detected in user message, logging only"
+                                        );
+                                        // Continue processing, just log
+                                    }
+                                    // Legacy support for old policies
+                                    crate::security::config::ActionPolicy::AskUser => {
+                                        tracing::warn!(
+                                            threat_level = ?scan_result.threat_level,
+                                            explanation = %scan_result.explanation,
+                                            "Security threat detected in user message, using legacy confirmation flow"
+                                        );
+
+                                        // Generate unique request ID
+                                        let request_id = format!("sec_{}", nanoid::nanoid!(8));
+                                        let threat_level_str = format!("{:?}", scan_result.threat_level);
+
+                                        // Store the flagged content for this request
+                                        {
+                                            let mut pending_requests = self.pending_security_requests.lock().await;
+                                            pending_requests.insert(request_id.clone(), combined_text.clone());
+                                        }
+
+                                        // Create tool confirmation request that looks like a security tool
+                                        let security_message = Message::assistant()
+                                            .with_tool_confirmation_request(
+                                                request_id.clone(),
+                                                "security_scanner".to_string(),
+                                                serde_json::json!({
+                                                    "threat_level": threat_level_str,
+                                                    "explanation": scan_result.explanation,
+                                                    "flagged_content": combined_text.clone(),
+                                                    "has_file_content": has_file_content,
+                                                    "has_image_content": has_image_content
+                                                }),
+                                                Some(format!(
+                                                    "🚨 Security Alert: {} threat detected{}\n\n{}\n\nDo you want to proceed with this message?",
+                                                    threat_level_str,
+                                                    if has_image_content { " in message with image content" } else { "" },
                                                     scan_result.explanation
-                                                ))
+                                                )),
                                             );
-                                        }));
-                                    }
-                                    
-                                    // NEW SMOOTH PROCESSING FLOW 🎯
-                                    // Get the action policy for this threat level and content type
-                                    let action_policy = security_manager.get_action_for_threat(
-                                        crate::security::config::ContentType::UserMessage, 
-                                        &scan_result.threat_level
-                                    );
-                                    
-                                    match action_policy {
-                                        crate::security::config::ActionPolicy::Block => {
-                                            tracing::error!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking)"
-                                            );
-                                            
-                                            // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
-                                            let security_note = security_manager.create_security_note(
-                                                &scan_result, 
-                                                crate::security::config::ContentType::UserMessage,
-                                                &combined_text,
-                                            );
-                                            
-                                            let mut response_message = Message::assistant().with_text(format!(
-                                                "🚨 **Security Alert: Request Blocked**\n\n\
-                                                Your message contains potentially malicious content and has been blocked for security reasons.\n\n\
-                                                **Threat Level:** {:?}\n\
-                                                **Details:** {}\n\n\
-                                                Please rephrase your request without potentially harmful content.",
-                                                scan_result.threat_level,
-                                                scan_result.explanation
-                                            ));
-                                            
-                                            // Add security note if available
-                                            if let Some(note) = security_note {
-                                                response_message = response_message.with_security_note(
-                                                    note.finding_id,
-                                                    format!("{:?}", note.content_type).to_lowercase(),
-                                                    format!("{:?}", note.threat_level).to_lowercase(),
-                                                    note.explanation,
-                                                    format!("{:?}", note.action_taken).to_lowercase(),
-                                                    note.show_feedback_options,
-                                                    note.timestamp.to_rfc3339(),
-                                                );
-                                            }
-                                            
-                                            return Ok(Box::pin(async_stream::try_stream! {
-                                                yield AgentEvent::Message(response_message);
-                                            }));
-                                        }
-                                        crate::security::config::ActionPolicy::BlockWithNote => {
-                                            tracing::error!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "🚨 SECURITY: Threat detected in user message - COMPLETE ISOLATION (blocking with feedback)"
-                                            );
-                                            
-                                            // 🚨 COMPLETE CONTENT ISOLATION: Return immediately without any trace of the blocked content
-                                            let security_note = security_manager.create_security_note(
-                                                &scan_result, 
-                                                crate::security::config::ContentType::UserMessage,
-                                                &combined_text,
-                                            );
-                                            
-                                            let mut response_message = Message::assistant().with_text(format!(
-                                                "🚨 **Security Alert: Request Blocked**\n\n\
-                                                Your message contains potentially malicious content and has been blocked for security reasons.\n\n\
-                                                **Threat Level:** {:?}\n\
-                                                **Details:** {}\n\n\
-                                                Please rephrase your request without potentially harmful content.",
-                                                scan_result.threat_level,
-                                                scan_result.explanation
-                                            ));
-                                            
-                                            // Add security note if available
-                                            if let Some(note) = security_note {
-                                                response_message = response_message.with_security_note(
-                                                    note.finding_id,
-                                                    format!("{:?}", note.content_type).to_lowercase(),
-                                                    format!("{:?}", note.threat_level).to_lowercase(),
-                                                    note.explanation,
-                                                    format!("{:?}", note.action_taken).to_lowercase(),
-                                                    note.show_feedback_options,
-                                                    note.timestamp.to_rfc3339(),
-                                                );
-                                            }
-                                            
-                                            return Ok(Box::pin(async_stream::try_stream! {
-                                                yield AgentEvent::Message(response_message);
-                                            }));
-                                        }
-                                        crate::security::config::ActionPolicy::ProcessWithNote => {
-                                            tracing::info!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, processing with note"
-                                            );
-                                            
-                                            // Create and store the security note to add after the AI response
-                                            if let Some(note) = security_manager.create_security_note(
-                                                &scan_result, 
-                                                crate::security::config::ContentType::UserMessage,
-                                                &combined_text,
-                                            ) {
-                                                pending_security_note = Some(note);
-                                            }
-                                            // Continue processing - the note will be added after the AI response
-                                        }
-                                        crate::security::config::ActionPolicy::Process => {
-                                            tracing::info!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, processing silently"
-                                            );
-                                            // Continue processing silently
-                                        }
-                                        crate::security::config::ActionPolicy::LogOnly => {
-                                            tracing::info!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, logging only"
-                                            );
-                                            // Continue processing, just log
-                                        }
-                                        // Legacy support for old policies
-                                        crate::security::config::ActionPolicy::AskUser => {
-                                            tracing::warn!(
-                                                threat_level = ?scan_result.threat_level,
-                                                explanation = %scan_result.explanation,
-                                                "Security threat detected in user message, using legacy confirmation flow"
-                                            );
-                                            
-                                            // Generate unique request ID
-                                            let request_id = format!("sec_{}", nanoid::nanoid!(8));
-                                            let threat_level_str = format!("{:?}", scan_result.threat_level);
-                                            
-                                            // Store the flagged content for this request
-                                            {
-                                                let mut pending_requests = self.pending_security_requests.lock().await;
-                                                pending_requests.insert(request_id.clone(), combined_text.clone());
-                                            }
-                                            
-                                            // Create tool confirmation request that looks like a security tool
-                                            let security_message = Message::assistant()
-                                                .with_tool_confirmation_request(
-                                                    request_id.clone(),
-                                                    "security_scanner".to_string(),
-                                                    serde_json::json!({
-                                                        "threat_level": threat_level_str,
-                                                        "explanation": scan_result.explanation,
-                                                        "flagged_content": combined_text.clone(),
-                                                        "has_file_content": has_file_content,
-                                                        "has_image_content": has_image_content
-                                                    }),
-                                                    Some(format!(
-                                                        "🚨 Security Alert: {} threat detected{}\n\n{}\n\nDo you want to proceed with this message?", 
-                                                        threat_level_str,
-                                                        if has_image_content { " in message with image content" } else { "" },
-                                                        scan_result.explanation
-                                                    )),
-                                                );
-                                            
-                                            return Ok(Box::pin(async_stream::try_stream! {
-                                                yield AgentEvent::Message(security_message);
-                                            }));
-                                        }
-                                        _ => {
-                                            // Default: continue processing
-                                            tracing::info!(
-                                                threat_level = ?scan_result.threat_level,
-                                                action_policy = ?action_policy,
-                                                "Security threat detected, using default processing"
-                                            );
-                                        }
-                                    }
-                                }
-                                Ok(None) => {
-                                    // Security scanning is disabled, continue normally
-                                }
-                                Err(e) => {
-                                    let error_msg = e.to_string();
-                                    if error_msg.contains("SECURITY_NOT_READY:") {
-                                        // Extract the user-friendly message and clone it
-                                        let user_message = error_msg.strip_prefix("SECURITY_NOT_READY: ")
-                                            .unwrap_or("Initialising Goose, this may take up to a minute")
-                                            .to_string(); // Clone to owned string
-                                        
-                                        tracing::info!("Security system not ready, blocking user message: {}", user_message);
-                                        
-                                        // Return a message telling the user to wait
+
                                         return Ok(Box::pin(async_stream::try_stream! {
-                                            yield AgentEvent::Message(
-                                                Message::assistant().with_text(format!("🔒 {}", user_message))
-                                            );
+                                            yield AgentEvent::Message(security_message);
                                         }));
-                                    } else {
-                                        // Other security errors should be logged but not block the user
-                                        tracing::warn!("Security scanning failed: {}", e);
+                                    }
+                                    _ => {
+                                        // Default: continue processing
+                                        tracing::info!(
+                                            threat_level = ?scan_result.threat_level,
+                                            action_policy = ?action_policy,
+                                            "Security threat detected, using default processing"
+                                        );
                                     }
                                 }
                             }
-                        } else {
-                            tracing::debug!(
-                                content = %combined_text,
-                                "Skipping security scan of obviously safe short text-only message"
-                            );
-                            // Continue - this message is safe
+                            Ok(None) => {
+                                // Security scanning is disabled, continue normally
+                            }
+                            Err(e) => {
+                                let error_msg = e.to_string();
+                                if error_msg.contains("SECURITY_NOT_READY:") {
+                                    // Extract the user-friendly message and clone it
+                                    let user_message = error_msg.strip_prefix("SECURITY_NOT_READY: ")
+                                        .unwrap_or("Initialising Goose, this may take up to a minute")
+                                        .to_string(); // Clone to owned string
+
+                                    tracing::info!("Security system not ready, blocking user message: {}", user_message);
+
+                                    // Return a message telling the user to wait
+                                    return Ok(Box::pin(async_stream::try_stream! {
+                                        yield AgentEvent::Message(
+                                            Message::assistant().with_text(format!("🔒 {}", user_message))
+                                        );
+                                    }));
+                                } else {
+                                    // Other security errors should be logged but not block the user
+                                    tracing::warn!("Security scanning failed: {}", e);
+                                }
+                            }
                         }
                     }
                 }
