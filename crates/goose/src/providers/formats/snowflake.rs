@@ -3,8 +3,8 @@ use crate::model::ModelConfig;
 use crate::providers::base::Usage;
 use crate::providers::errors::ProviderError;
 use anyhow::{anyhow, Result};
-use mcp_core::tool::ToolCall;
-use rmcp::model::{Role, Tool};
+use mcp_core::{Tool, ToolCall};
+use rmcp::model::{Content, Role};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -38,7 +38,13 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                     if let Ok(result) = &tool_response.tool_result {
                         let text = result
                             .iter()
-                            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                            .filter_map(|c| {
+                                if let Some(text_content) = c.as_text() {
+                                    Some(text_content.text.clone())
+                                } else {
+                                    None
+                                }
+                            })
                             .collect::<Vec<_>>()
                             .join("\n");
 
@@ -52,6 +58,9 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 }
                 MessageContent::ToolConfirmationRequest(_) => {
                     // Skip tool confirmation requests
+                }
+                MessageContent::SecurityConfirmationRequest(_) => {
+                    // Skip security confirmation requests
                 }
                 MessageContent::ContextLengthExceeded(_) => {
                     // Skip
@@ -68,6 +77,9 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 MessageContent::Image(_) => continue, // Snowflake doesn't support image content yet
                 MessageContent::FrontendToolRequest(_tool_request) => {
                     // Skip frontend tool requests
+                }
+                MessageContent::SecurityNote(_) => {
+                    // Security notes are handled by the UI, skip in provider formatting
                 }
             }
         }
@@ -198,7 +210,7 @@ pub fn parse_streaming_response(sse_data: &str) -> Result<Message> {
 }
 
 /// Convert Snowflake's API response to internal Message format
-pub fn response_to_message(response: &Value) -> Result<Message> {
+pub fn response_to_message(response: Value) -> Result<Message> {
     let mut message = Message::assistant();
 
     let content_list = response.get("content_list").and_then(|cl| cl.as_array());
@@ -359,7 +371,6 @@ pub fn create_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::object;
     use serde_json::json;
 
     #[test]
@@ -381,7 +392,7 @@ mod tests {
             }
         });
 
-        let message = response_to_message(&response)?;
+        let message = response_to_message(response.clone())?;
         let usage = get_usage(&response)?;
 
         if let MessageContent::Text(text) = &message.content[0] {
@@ -418,7 +429,7 @@ mod tests {
             }
         });
 
-        let message = response_to_message(&response)?;
+        let message = response_to_message(response.clone())?;
         let usage = get_usage(&response)?;
 
         if let MessageContent::ToolRequest(tool_request) = &message.content[0] {
@@ -461,7 +472,7 @@ mod tests {
             Tool::new(
                 "calculator",
                 "Calculate mathematical expressions",
-                object!({
+                json!({
                     "type": "object",
                     "properties": {
                         "expression": {
@@ -470,11 +481,12 @@ mod tests {
                         }
                     }
                 }),
+                None,
             ),
             Tool::new(
                 "weather",
                 "Get weather information",
-                object!({
+                json!({
                     "type": "object",
                     "properties": {
                         "location": {
@@ -483,6 +495,7 @@ mod tests {
                         }
                     }
                 }),
+                None,
             ),
         ];
 
@@ -556,7 +569,7 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-3-5-sonnet","
         let tools = vec![Tool::new(
             "get_stock_price",
             "Get stock price information",
-            object!({
+            json!({
                 "type": "object",
                 "properties": {
                     "symbol": {
@@ -566,6 +579,7 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-3-5-sonnet","
                 },
                 "required": ["symbol"]
             }),
+            None,
         )];
 
         let request = create_request(&model_config, system, &messages, &tools)?;
@@ -623,7 +637,7 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-3-5-sonnet","
             }
         });
 
-        let message = response_to_message(&response)?;
+        let message = response_to_message(response.clone())?;
 
         // Should have both text and tool request content
         assert_eq!(message.content.len(), 2);
@@ -662,7 +676,8 @@ data: {"id":"a9537c2c-2017-4906-9817-2456168d89fa","model":"claude-3-5-sonnet","
         let tools = vec![Tool::new(
             "test_tool",
             "Test tool",
-            object!({"type": "object", "properties": {}}),
+            json!({"type": "object", "properties": {}}),
+            None,
         )];
 
         let request = create_request(&model_config, system, &messages, &tools)?;

@@ -126,7 +126,6 @@ function BaseChatContent({
     summaryContent,
     summarizedThread,
     isSummaryModalOpen,
-    isLoadingSummary,
     resetMessagesWithSummary,
     closeSummaryModal,
     updateSummary,
@@ -407,7 +406,7 @@ function BaseChatContent({
                       }}
                       isUserMessage={isUserMessage}
                       onScrollToBottom={handleScrollToBottom}
-                      isStreamingMessage={chatState !== ChatState.Idle}
+                      _isStreamingMessage={chatState !== ChatState.Idle}
                     />
                   ) : (
                     // Render messages with SearchView wrapper when search is enabled
@@ -423,7 +422,7 @@ function BaseChatContent({
                         }}
                         isUserMessage={isUserMessage}
                         onScrollToBottom={handleScrollToBottom}
-                        isStreamingMessage={chatState !== ChatState.Idle}
+                        _isStreamingMessage={chatState !== ChatState.Idle}
                       />
                     </SearchView>
                   )}
@@ -504,10 +503,7 @@ function BaseChatContent({
           {/* Fixed loading indicator at bottom left of chat container */}
           {chatState !== ChatState.Idle && (
             <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
-              <LoadingGoose
-                message={isLoadingSummary ? 'summarizing conversation…' : undefined}
-                chatState={chatState}
-              />
+              <LoadingGoose messages={messages} />
             </div>
           )}
         </div>

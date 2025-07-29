@@ -1208,7 +1208,7 @@ async fn run_scheduled_job_internal(
         };
 
         match agent
-            .reply(&all_session_messages, Some(session_config.clone()), None)
+            .reply(&all_session_messages, Some(session_config.clone()))
             .await
         {
             Ok(mut stream) => {

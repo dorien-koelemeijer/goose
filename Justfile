@@ -6,8 +6,8 @@ default:
 
 # Default release command
 release-binary:
-    @echo "Building release version..."
-    cargo build --release
+    @echo "Building release version with security features..."
+    cargo build --release -p goose-server
     @just copy-binary
     @echo "Generating OpenAPI schema..."
     cargo run -p goose-server --bin generate_schema
@@ -58,6 +58,14 @@ copy-binary BUILD_MODE="release":
     else \
         echo "Binary not found in target/{{BUILD_MODE}}"; \
         exit 1; \
+    fi
+    @if [ -f ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ]; then \
+        echo "Copying ONNX runtime library from target/{{BUILD_MODE}}..."; \
+        cp -p ./target/{{BUILD_MODE}}/libonnxruntime.1.16.0.dylib ./ui/desktop/src/bin/; \
+        echo "Fixing library path for ONNX runtime library..."; \
+        install_name_tool -change @rpath/libonnxruntime.1.16.0.dylib $(pwd)/ui/desktop/src/bin/libonnxruntime.1.16.0.dylib ./ui/desktop/src/bin/goosed 2>/dev/null || true; \
+    else \
+        echo "ONNX runtime library not found, skipping..."; \
     fi
     @if [ -f ./target/{{BUILD_MODE}}/goose ]; then \
         echo "Copying goose CLI binary from target/{{BUILD_MODE}}..."; \
@@ -443,24 +451,3 @@ win-total-dbg *allparam:
 win-total-rls *allparam:
   just win-bld-rls{{allparam}}
   just win-run-rls
-
-### Build and run the Kotlin example with
-### auto-generated bindings for goose-llm
-kotlin-example:
-    # Build Rust dylib and generate Kotlin bindings
-    cargo build -p goose-llm
-    cargo run --features=uniffi/cli --bin uniffi-bindgen generate \
-        --library ./target/debug/libgoose_llm.dylib --language kotlin --out-dir bindings/kotlin
-
-    # Compile and run the Kotlin example
-    cd bindings/kotlin/ && kotlinc \
-      example/Usage.kt \
-      uniffi/goose_llm/goose_llm.kt \
-      -classpath "libs/kotlin-stdlib-1.9.0.jar:libs/kotlinx-coroutines-core-jvm-1.7.3.jar:libs/jna-5.13.0.jar" \
-      -include-runtime \
-      -d example.jar
-
-    cd bindings/kotlin/ && java \
-      -Djna.library.path=$HOME/Development/goose/target/debug \
-      -classpath "example.jar:libs/kotlin-stdlib-1.9.0.jar:libs/kotlinx-coroutines-core-jvm-1.7.3.jar:libs/jna-5.13.0.jar" \
-      UsageKt

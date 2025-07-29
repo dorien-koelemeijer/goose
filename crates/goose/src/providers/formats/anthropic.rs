@@ -90,6 +90,12 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 MessageContent::ToolConfirmationRequest(_tool_confirmation_request) => {
                     // Skip tool confirmation requests
                 }
+                MessageContent::SecurityConfirmationRequest(_security_confirmation_request) => {
+                    // Skip security confirmation requests
+                }
+                MessageContent::SecurityNote(_) => {
+                    // Security notes are handled by the UI, skip in provider formatting
+                }
                 MessageContent::ContextLengthExceeded(_) => {
                     // Skip
                 }

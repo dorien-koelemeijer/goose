@@ -33,6 +33,7 @@ impl From<ToolResult<Vec<Content>>> for ToolCallResult {
 
 use super::agent::{tool_stream, ToolStream};
 use crate::agents::Agent;
+use crate::type_conversion::convert_notification_stream;
 
 pub const DECLINED_RESPONSE: &str = "The user has declined to run this tool. \
     DO NOT attempt to call this tool again. \
@@ -71,12 +72,14 @@ impl Agent {
                     while let Some((req_id, confirmation)) = rx.recv().await {
                         if req_id == request.id {
                             if confirmation.permission == Permission::AllowOnce || confirmation.permission == Permission::AlwaysAllow {
-                                let (req_id, tool_result) = self.dispatch_tool_call(tool_call.clone(), request.id.clone(), cancellation_token.clone()).await;
+                                let (req_id, tool_result) = self.dispatch_tool_call(tool_call.clone(), request.id.clone()).await;
                                 let mut futures = tool_futures.lock().await;
 
                                 futures.push((req_id, match tool_result {
                                     Ok(result) => tool_stream(
-                                        result.notification_stream.unwrap_or_else(|| Box::new(stream::empty())),
+                                        result.notification_stream
+                                            .map(|stream| Box::new(convert_notification_stream(stream)) as Box<dyn Stream<Item = _> + Send + Unpin>)
+                                            .unwrap_or_else(|| Box::new(stream::empty())),
                                         result.result,
                                     ),
                                     Err(e) => tool_stream(

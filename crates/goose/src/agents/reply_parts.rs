@@ -2,35 +2,20 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use async_stream::try_stream;
-use futures::stream::StreamExt;
-
 use crate::agents::router_tool_selector::RouterToolSelectionStrategy;
 use crate::config::Config;
 use crate::message::{Message, MessageContent, ToolRequest};
-use crate::providers::base::{stream_from_single_message, MessageStream, Provider, ProviderUsage};
+use crate::providers::base::{Provider, ProviderUsage};
 use crate::providers::errors::ProviderError;
 use crate::providers::toolshim::{
     augment_message_with_tool_calls, convert_tool_messages_to_text,
     modify_system_prompt_for_tool_json, OllamaInterpreter,
 };
 use crate::session;
-use rmcp::model::Tool;
+use mcp_core::tool::Tool;
+use rmcp::model::Content;
 
 use super::super::agents::Agent;
-
-async fn toolshim_postprocess(
-    response: Message,
-    toolshim_tools: &[Tool],
-) -> Result<Message, ProviderError> {
-    let interpreter = OllamaInterpreter::new().map_err(|e| {
-        ProviderError::ExecutionError(format!("Failed to create OllamaInterpreter: {}", e))
-    })?;
-
-    augment_message_with_tool_calls(&interpreter, response, toolshim_tools)
-        .await
-        .map_err(|e| ProviderError::ExecutionError(format!("Failed to augment message: {}", e)))
-}
 
 impl Agent {
     /// Prepares tools and system prompt for a provider request
@@ -68,7 +53,7 @@ impl Agent {
         }
 
         // Prepare system prompt
-        let extension_manager = self.extension_manager.read().await;
+        let extension_manager = self.extension_manager.lock().await;
         let extensions_info = extension_manager.get_extensions_info().await;
 
         // Get model name from provider
@@ -96,6 +81,36 @@ impl Agent {
             tools = vec![];
         }
 
+        // Security scanning: scan system prompt for threats (skip for now due to false positives)
+        // System prompts are generated internally and contain instruction-like language
+        // that triggers false positives in prompt injection detection models
+        if false { // Disabled - system prompts are trusted internal content
+            if let Some(security_manager) = &*self.security_manager.lock().await {
+                let content = vec![Content::text(system_prompt.clone())];
+                
+                tracing::info!("Scanning system prompt for security threats");
+                
+                if let Ok(Some(scan_result)) = security_manager.scan_content(&content).await {
+                    let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::UserMessage, &scan_result.threat_level);
+                    if matches!(action_policy, crate::security::config::ActionPolicy::BlockWithNote) {
+                        tracing::warn!(
+                            threat_level = ?scan_result.threat_level,
+                            explanation = %scan_result.explanation,
+                            "Security threat detected in system prompt, would ask user for confirmation"
+                        );
+                    } else if security_manager.should_block(&scan_result) {
+                        tracing::error!(
+                            threat_level = ?scan_result.threat_level,
+                            explanation = %scan_result.explanation,
+                            "Security threat detected in system prompt, using safe fallback"
+                        );
+                        // Use a safe fallback system prompt
+                        system_prompt = "You are a helpful AI assistant.".to_string();
+                    }
+                }
+            }
+        }
+
         Ok((tools, toolshim_tools, system_prompt))
     }
 
@@ -110,11 +125,11 @@ impl Agent {
             .iter()
             .fold((HashSet::new(), HashSet::new()), |mut acc, tool| {
                 match &tool.annotations {
-                    Some(annotations) if annotations.read_only_hint.unwrap_or(false) => {
-                        acc.0.insert(tool.name.to_string());
+                    Some(annotations) if annotations.read_only_hint => {
+                        acc.0.insert(tool.name.clone());
                     }
                     _ => {
-                        acc.1.insert(tool.name.to_string());
+                        acc.1.insert(tool.name.clone());
                     }
                 }
                 acc
@@ -144,65 +159,23 @@ impl Agent {
             .complete(system_prompt, &messages_for_provider, tools)
             .await?;
 
+        // Store the model information in the global store
         crate::providers::base::set_current_model(&usage.model);
 
+        // Post-process / structure the response only if tool interpretation is enabled
         if config.toolshim {
-            response = toolshim_postprocess(response, toolshim_tools).await?;
+            let interpreter = OllamaInterpreter::new().map_err(|e| {
+                ProviderError::ExecutionError(format!("Failed to create OllamaInterpreter: {}", e))
+            })?;
+
+            response = augment_message_with_tool_calls(&interpreter, response, toolshim_tools)
+                .await
+                .map_err(|e| {
+                    ProviderError::ExecutionError(format!("Failed to augment message: {}", e))
+                })?;
         }
 
         Ok((response, usage))
-    }
-
-    /// Stream a response from the LLM provider.
-    /// Handles toolshim transformations if needed
-    pub(crate) async fn stream_response_from_provider(
-        provider: Arc<dyn Provider>,
-        system_prompt: &str,
-        messages: &[Message],
-        tools: &[Tool],
-        toolshim_tools: &[Tool],
-    ) -> Result<MessageStream, ProviderError> {
-        let config = provider.get_model_config();
-
-        // Convert tool messages to text if toolshim is enabled
-        let messages_for_provider = if config.toolshim {
-            convert_tool_messages_to_text(messages)
-        } else {
-            messages.to_vec()
-        };
-
-        // Clone owned data to move into the async stream
-        let system_prompt = system_prompt.to_owned();
-        let tools = tools.to_owned();
-        let toolshim_tools = toolshim_tools.to_owned();
-        let provider = provider.clone();
-
-        let mut stream = if provider.supports_streaming() {
-            provider
-                .stream(system_prompt.as_str(), &messages_for_provider, &tools)
-                .await?
-        } else {
-            let (message, usage) = provider
-                .complete(system_prompt.as_str(), &messages_for_provider, &tools)
-                .await?;
-            stream_from_single_message(message, usage)
-        };
-
-        Ok(Box::pin(try_stream! {
-            while let Some(Ok((mut message, usage))) = stream.next().await {
-                // Store the model information in the global store
-                if let Some(usage) = usage.as_ref() {
-                    crate::providers::base::set_current_model(&usage.model);
-                }
-
-                // Post-process / structure the response only if tool interpretation is enabled
-                if message.is_some() && config.toolshim {
-                    message = Some(toolshim_postprocess(message.unwrap(), &toolshim_tools).await?);
-                }
-
-                yield (message, usage);
-            }
-        }))
     }
 
     /// Categorize tool requests from the response into different types
@@ -275,9 +248,10 @@ impl Agent {
         (frontend_requests, other_requests, filtered_message)
     }
 
+    /// Update session metrics after a response
     pub(crate) async fn update_session_metrics(
-        session_config: &crate::agents::types::SessionConfig,
-        usage: &ProviderUsage,
+        session_config: crate::agents::types::SessionConfig,
+        usage: &crate::providers::base::ProviderUsage,
         messages_length: usize,
     ) -> Result<()> {
         let session_file_path = match session::storage::get_path(session_config.id.clone()) {

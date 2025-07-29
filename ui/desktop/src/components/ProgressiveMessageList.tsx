@@ -36,7 +36,8 @@ interface ProgressiveMessageListProps {
   showLoadingThreshold?: number; // Only show loading if more than X messages
   // Custom render function for messages
   renderMessage?: (message: Message, index: number) => React.ReactNode | null;
-  isStreamingMessage?: boolean; // Whether messages are currently being streamed
+  // Whether messages are currently being streamed (unused but kept for compatibility)
+  _isStreamingMessage?: boolean;
 }
 
 export default function ProgressiveMessageList({
@@ -51,7 +52,6 @@ export default function ProgressiveMessageList({
   batchDelay = 30, // 30ms delay between batches (faster)
   showLoadingThreshold = 30, // Only show progressive loading for 30+ messages (lower threshold)
   renderMessage, // Custom render function
-  isStreamingMessage = false, // Whether messages are currently being streamed
 }: ProgressiveMessageListProps) {
   const [renderedCount, setRenderedCount] = useState(() => {
     // Initialize with either all messages (if small) or first batch (if large)
@@ -225,12 +225,6 @@ export default function ProgressiveMessageList({
                     append={append}
                     appendMessage={appendMessage}
                     toolCallNotifications={toolCallNotifications}
-                    isStreaming={
-                      isStreamingMessage &&
-                      !isUser &&
-                      index === messagesToRender.length - 1 &&
-                      message.role === 'assistant'
-                    }
                   />
                 )}
               </>
@@ -255,7 +249,6 @@ export default function ProgressiveMessageList({
     appendMessage,
     toolCallNotifications,
     onScrollToBottom,
-    isStreamingMessage,
   ]);
 
   return (
@@ -265,7 +258,7 @@ export default function ProgressiveMessageList({
       {/* Loading indicator when progressively rendering */}
       {isLoading && (
         <div className="flex flex-col items-center justify-center py-8">
-          <LoadingGoose message={`Loading messages... (${renderedCount}/${messages.length})`} />
+          <LoadingGoose messages={messages} />
           <div className="text-xs text-text-muted mt-2">
             Press Cmd/Ctrl+F to load all messages immediately for search
           </div>

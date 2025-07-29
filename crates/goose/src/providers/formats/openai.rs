@@ -199,6 +199,12 @@ pub fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<
                 MessageContent::ToolConfirmationRequest(_) => {
                     // Skip tool confirmation requests
                 }
+                MessageContent::SecurityConfirmationRequest(_) => {
+                    // Skip security confirmation requests
+                }
+                MessageContent::SecurityNote(_) => {
+                    // Security notes are handled by the UI, skip in provider formatting
+                }
                 MessageContent::Image(image) => {
                     // Handle direct image content
                     converted["content"] = json!([convert_image(image, image_format)]);

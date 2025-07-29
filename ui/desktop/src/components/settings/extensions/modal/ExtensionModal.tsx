@@ -49,8 +49,7 @@ export default function ExtensionModal({
     // Check if command/endpoint has changed
     const commandChanged =
       (formData.type === 'stdio' && formData.cmd !== initialData.cmd) ||
-      (formData.type === 'sse' && formData.endpoint !== initialData.endpoint) ||
-      (formData.type === 'streamable_http' && formData.endpoint !== initialData.endpoint);
+      (formData.type === 'sse' && formData.endpoint !== initialData.endpoint);
 
     // Check if headers have changed
     const headersChanged = formData.headers.some((header) => header.isEdited === true);
@@ -204,10 +203,7 @@ export default function ExtensionModal({
   const isConfigValid = () => {
     return (
       (formData.type === 'stdio' && !!formData.cmd && formData.cmd.trim() !== '') ||
-      (formData.type === 'sse' && !!formData.endpoint && formData.endpoint.trim() !== '') ||
-      (formData.type === 'streamable_http' &&
-        !!formData.endpoint &&
-        formData.endpoint.trim() !== '')
+      (formData.type === 'sse' && !!formData.endpoint && formData.endpoint.trim() !== '')
     );
   };
 
@@ -353,8 +349,8 @@ export default function ExtensionModal({
             </div>
           )}
 
-          {/* Request Headers - Only for streamable_http */}
-          {formData.type === 'streamable_http' && (
+          {/* Request Headers - Not supported in current API */}
+          {false && (
             <>
               {/* Divider */}
               <hr className="border-t border-borderSubtle mb-4" />

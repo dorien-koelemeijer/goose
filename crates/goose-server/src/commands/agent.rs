@@ -5,12 +5,10 @@ use crate::state;
 use anyhow::Result;
 use etcetera::{choose_app_strategy, AppStrategy};
 use goose::agents::Agent;
-use goose::config::APP_STRATEGY;
+use goose::config::{APP_STRATEGY, Config, SecuritySettings};
 use goose::scheduler_factory::SchedulerFactory;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
-
-use goose::providers::pricing::initialize_pricing_cache;
 
 pub async fn run() -> Result<()> {
     // Initialize logging
@@ -18,20 +16,41 @@ pub async fn run() -> Result<()> {
 
     let settings = configuration::Settings::new()?;
 
-    // Initialize pricing cache on startup
-    tracing::info!("Initializing pricing cache...");
-    if let Err(e) = initialize_pricing_cache().await {
-        tracing::warn!(
-            "Failed to initialize pricing cache: {}. Pricing data may not be available.",
-            e
-        );
-    }
-
     let secret_key =
         std::env::var("GOOSE_SERVER__SECRET_KEY").unwrap_or_else(|_| "test".to_string());
 
     let new_agent = Agent::new();
     let agent_ref = Arc::new(new_agent);
+
+    // Configure security based on user configuration - but don't block on model downloads
+    let config = Config::global();
+    if let Ok(security_settings) = config.get_param::<SecuritySettings>("security") {
+        if security_settings.enabled {
+            let security_config = security_settings.to_security_config();
+            
+            // Start security configuration in background - don't block server startup
+            let agent_clone = agent_ref.clone();
+            tokio::spawn(async move {
+                match agent_clone.configure_security(security_config).await {
+                    Ok(init_messages) => {
+                        info!("Security scanning enabled with ONNX ensemble (Deepset + ProtectAI DeBERTa models)");
+                        if !init_messages.is_empty() {
+                            info!("Security initialization messages: {} messages generated", init_messages.len());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize security system: {}", e);
+                    }
+                }
+            });
+            
+            info!("Security system initialization started in background");
+        } else {
+            info!("Security scanning is disabled in configuration");
+        }
+    } else {
+        info!("No security configuration found, security scanning disabled");
+    }
 
     let app_state = state::AppState::new(agent_ref.clone(), secret_key.clone()).await;
 

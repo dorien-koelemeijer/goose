@@ -137,7 +137,7 @@ const ParameterInputModal: React.FC<ParameterInputModalProps> = ({
                     }`}
                   >
                     <option value="">Select an option...</option>
-                    {param.options.map((option) => (
+                    {param.options.map((option: string) => (
                       <option key={option} value={option}>
                         {option}
                       </option>

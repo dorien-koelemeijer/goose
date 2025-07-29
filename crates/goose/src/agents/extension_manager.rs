@@ -2,12 +2,11 @@ use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::{future, FutureExt};
-use rmcp::model::GetPromptResult;
+use mcp_core::protocol::GetPromptResult;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
-use tempfile::tempdir;
 use tokio::sync::Mutex;
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
@@ -19,9 +18,10 @@ use crate::agents::extension::Envs;
 use crate::config::{Config, ExtensionConfigManager};
 use crate::prompt_template;
 use mcp_client::client::{ClientCapabilities, ClientInfo, McpClient, McpClientTrait};
-use mcp_client::transport::{SseTransport, StdioTransport, StreamableHttpTransport, Transport};
-use mcp_core::{ToolCall, ToolError};
-use rmcp::model::{Content, Prompt, Resource, ResourceContents, Tool};
+use mcp_client::transport::{SseTransport, StdioTransport, Transport};
+use mcp_core::{Tool, ToolCall, ToolError, ToolResult};
+use mcp_core::tool::ToolAnnotations;
+use rmcp::model::{Content, Prompt, ResourceContents};
 use serde_json::Value;
 
 // By default, we set it to Jan 1, 2020 if the resource does not have a timestamp
@@ -36,7 +36,6 @@ pub struct ExtensionManager {
     clients: HashMap<String, McpClientBox>,
     instructions: HashMap<String, String>,
     resource_capable_extensions: HashSet<String>,
-    temp_dirs: HashMap<String, tempfile::TempDir>,
 }
 
 /// A flattened representation of a resource used by the agent to prepare inference
@@ -107,7 +106,6 @@ impl ExtensionManager {
             clients: HashMap::new(),
             instructions: HashMap::new(),
             resource_capable_extensions: HashSet::new(),
-            temp_dirs: HashMap::new(),
         }
     }
 
@@ -118,6 +116,15 @@ impl ExtensionManager {
     /// Add a new MCP extension based on the provided client type
     // TODO IMPORTANT need to ensure this times out if the extension command is broken!
     pub async fn add_extension(&mut self, config: ExtensionConfig) -> ExtensionResult<()> {
+        self.add_extension_with_security(config, None).await
+    }
+
+    /// Add a new MCP extension with optional security scanning
+    pub async fn add_extension_with_security(
+        &mut self, 
+        config: ExtensionConfig,
+        security_manager: Option<&crate::security::SecurityManager>
+    ) -> ExtensionResult<()> {
         let config_name = config.key().to_string();
         let sanitized_name = normalize(config_name.clone());
 
@@ -199,28 +206,6 @@ impl ExtensionManager {
                     .await?,
                 )
             }
-            ExtensionConfig::StreamableHttp {
-                uri,
-                envs,
-                env_keys,
-                headers,
-                timeout,
-                ..
-            } => {
-                let all_envs = merge_environments(envs, env_keys, &sanitized_name).await?;
-                let transport =
-                    StreamableHttpTransport::with_headers(uri, all_envs, headers.clone());
-                let handle = transport.start().await?;
-                Box::new(
-                    McpClient::connect(
-                        handle,
-                        Duration::from_secs(
-                            timeout.unwrap_or(crate::config::DEFAULT_EXTENSION_TIMEOUT),
-                        ),
-                    )
-                    .await?,
-                )
-            }
             ExtensionConfig::Stdio {
                 cmd,
                 args,
@@ -245,7 +230,6 @@ impl ExtensionManager {
             ExtensionConfig::Builtin {
                 name,
                 display_name: _,
-                description: _,
                 timeout,
                 bundled: _,
             } => {
@@ -270,49 +254,6 @@ impl ExtensionManager {
                     .await?,
                 )
             }
-            ExtensionConfig::InlinePython {
-                name,
-                code,
-                timeout,
-                dependencies,
-                ..
-            } => {
-                let temp_dir = tempdir()?;
-                let file_path = temp_dir.path().join(format!("{}.py", name));
-                std::fs::write(&file_path, code)?;
-
-                let mut args = vec![];
-
-                let mut all_deps = vec!["mcp".to_string()];
-
-                if let Some(deps) = dependencies.as_ref() {
-                    all_deps.extend(deps.iter().cloned());
-                }
-
-                for dep in all_deps {
-                    args.push("--with".to_string());
-                    args.push(dep);
-                }
-
-                args.push("python".to_string());
-                args.push(file_path.to_str().unwrap().to_string());
-
-                let transport = StdioTransport::new("uvx", args, HashMap::new());
-                let handle = transport.start().await?;
-                let client = Box::new(
-                    McpClient::connect(
-                        handle,
-                        Duration::from_secs(
-                            timeout.unwrap_or(crate::config::DEFAULT_EXTENSION_TIMEOUT),
-                        ),
-                    )
-                    .await?,
-                );
-
-                self.temp_dirs.insert(sanitized_name.clone(), temp_dir);
-
-                client
-            }
             _ => unreachable!(),
         };
 
@@ -326,7 +267,7 @@ impl ExtensionManager {
         let init_result = client
             .initialize(info, capabilities)
             .await
-            .map_err(|e| ExtensionError::Initialization(Box::new(config.clone()), e))?;
+            .map_err(|e| ExtensionError::Initialization(config.clone(), e))?;
 
         if let Some(instructions) = init_result.instructions {
             self.instructions
@@ -340,6 +281,42 @@ impl ExtensionManager {
 
         self.clients
             .insert(sanitized_name.clone(), Arc::new(Mutex::new(client)));
+
+        // Security scanning: scan the newly added extension's tools immediately
+        if let Some(security_manager) = security_manager {
+            tracing::info!(
+                extension_name = %sanitized_name,
+                "Starting immediate security scan of newly added extension tools"
+            );
+            
+            // Scan only this extension's tools
+            match self.get_prefixed_tools_with_security(Some(sanitized_name.clone()), Some(security_manager)).await {
+                Ok(safe_tools) => {
+                    tracing::info!(
+                        extension_name = %sanitized_name,
+                        tool_count = safe_tools.len(),
+                        "Extension security scan completed successfully"
+                    );
+                    // Tools are already filtered by security scanning in get_prefixed_tools_with_security
+                    // If any tools were blocked, they won't be in safe_tools
+                }
+                Err(e) => {
+                    tracing::error!(
+                        extension_name = %sanitized_name,
+                        error = %e,
+                        "Security threat detected in extension, removing extension"
+                    );
+                    
+                    // Remove the extension that was just added due to security threat
+                    self.clients.remove(&sanitized_name);
+                    self.instructions.remove(&sanitized_name);
+                    self.resource_capable_extensions.remove(&sanitized_name);
+                    
+                    // Return the security error to prevent extension from being enabled
+                    return Err(e);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -363,7 +340,6 @@ impl ExtensionManager {
         self.clients.remove(&sanitized_name);
         self.instructions.remove(&sanitized_name);
         self.resource_capable_extensions.remove(&sanitized_name);
-        self.temp_dirs.remove(&sanitized_name);
         Ok(())
     }
 
@@ -408,6 +384,16 @@ impl ExtensionManager {
         &self,
         extension_name: Option<String>,
     ) -> ExtensionResult<Vec<Tool>> {
+        self.get_prefixed_tools_with_security(extension_name, None).await
+    }
+
+    /// Get all tools from all clients with proper prefixing
+    /// Optionally includes security scanning of MCP tool definitions
+    pub async fn get_prefixed_tools_with_security(
+        &self,
+        extension_name: Option<String>,
+        security_manager: Option<&crate::security::SecurityManager>,
+    ) -> ExtensionResult<Vec<Tool>> {
         // Filter clients based on the provided extension_name or include all if None
         let filtered_clients = self.clients.iter().filter(|(name, _)| {
             if let Some(ref name_filter) = extension_name {
@@ -427,18 +413,19 @@ impl ExtensionManager {
                 let mut client_tools = client_guard.list_tools(None).await?;
 
                 loop {
-                    for client_tool in client_tools.tools {
-                        let mut tool = Tool::new(
-                            format!("{}__{}", name, client_tool.name),
-                            client_tool.description.unwrap_or_default(),
-                            client_tool.input_schema,
-                        );
-
-                        if tool.annotations.is_some() {
-                            tool = tool.annotate(client_tool.annotations.unwrap())
-                        }
-
-                        tools.push(tool);
+                    for tool in client_tools.tools {
+                        tools.push(Tool::new(
+                            format!("{}__{}", name, tool.name),
+                            tool.description.as_deref().unwrap_or(""),
+                            serde_json::to_value(&*tool.input_schema).unwrap_or_default(),
+                            tool.annotations.map(|a| ToolAnnotations {
+                                title: a.title,
+                                read_only_hint: a.read_only_hint.unwrap_or(false),
+                                destructive_hint: a.destructive_hint.unwrap_or(true),
+                                idempotent_hint: a.idempotent_hint.unwrap_or(false),
+                                open_world_hint: a.open_world_hint.unwrap_or(true),
+                            }),
+                        ));
                     }
 
                     // Exit loop when there are no more pages
@@ -466,7 +453,90 @@ impl ExtensionManager {
             }
         }
 
-        Ok(tools)
+        // Security scanning: scan MCP tool definitions for malicious content
+        if let Some(security_manager) = security_manager {
+            let mut safe_tools = Vec::new();
+            
+            for tool in tools {
+                // Create tool information string for scanning
+                let tool_info = format!(
+                    "Tool Name: {}\nDescription: {}\nParameters: {}",
+                    tool.name,
+                    tool.description,
+                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                );
+                
+                tracing::info!(
+                    tool_name = %tool.name,
+                    tool_info_length = tool_info.len(),
+                    "Starting security scan of MCP tool definition"
+                );
+                
+                match security_manager.scan_content_with_type(&[Content::text(tool_info)], crate::security::config::ContentType::Extension).await {
+                    Ok(Some(scan_result)) => {
+                        let action_policy = security_manager.get_action_for_threat(crate::security::config::ContentType::Extension, &scan_result.threat_level);
+                        
+                        match action_policy {
+                            crate::security::config::ActionPolicy::Block => {
+                                tracing::error!(
+                                    tool_name = %tool.name,
+                                    threat_level = ?scan_result.threat_level,
+                                    explanation = %scan_result.explanation,
+                                    "🚨 SECURITY: Blocking malicious MCP tool - failing extension installation"
+                                );
+                                // Return error to prevent extension installation
+                                return Err(ExtensionError::SecurityThreat {
+                                    tool_name: tool.name.clone(),
+                                    threat_level: format!("{:?}", scan_result.threat_level),
+                                    explanation: scan_result.explanation.clone(),
+                                });
+                            }
+                            crate::security::config::ActionPolicy::BlockWithNote => {
+                                tracing::warn!(
+                                    tool_name = %tool.name,
+                                    threat_level = ?scan_result.threat_level,
+                                    explanation = %scan_result.explanation,
+                                    "⚠️ SECURITY: Suspicious MCP tool detected - returning error to trigger user confirmation"
+                                );
+                                // Return an error that will be handled by the agent to show user confirmation
+                                return Err(ExtensionError::SecurityThreat {
+                                    tool_name: tool.name.clone(),
+                                    threat_level: format!("{:?}", scan_result.threat_level),
+                                    explanation: scan_result.explanation.clone(),
+                                });
+                            }
+                            _ => {
+                                tracing::info!(
+                                    tool_name = %tool.name,
+                                    action_policy = ?action_policy,
+                                    "MCP tool scan result: Safe or allowed"
+                                );
+                                // Tool is safe or allowed, add it
+                                safe_tools.push(tool);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Security scanning disabled, include all tools
+                        safe_tools.push(tool);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            tool_name = %tool.name,
+                            error = %e,
+                            "Failed to scan MCP tool for security threats, allowing tool"
+                        );
+                        // On scan error, allow the tool to avoid breaking functionality
+                        safe_tools.push(tool);
+                    }
+                }
+            }
+            
+            Ok(safe_tools)
+        } else {
+            // No security manager provided, return all tools
+            Ok(tools)
+        }
     }
 
     /// Get client resources and their contents
@@ -478,17 +548,20 @@ impl ExtensionManager {
             let resources = client_guard.list_resources(None).await?;
 
             for resource in resources.resources {
-                // Skip reading the resource if it's not marked active
-                // This avoids blowing up the context with inactive resources
-                if !resource_is_active(&resource) {
-                    continue;
-                }
-
+                // Process all resources - the is_active() method doesn't exist in current rmcp version
                 if let Ok(contents) = client_guard.read_resource(&resource.uri).await {
                     for content in contents.contents {
                         let (uri, content_str) = match content {
-                            ResourceContents::TextResourceContents { uri, text, .. } => (uri, text),
-                            ResourceContents::BlobResourceContents { uri, blob, .. } => (uri, blob),
+                            ResourceContents::TextResourceContents {
+                                uri,
+                                text,
+                                ..
+                            } => (uri, text),
+                            ResourceContents::BlobResourceContents {
+                                uri,
+                                blob,
+                                ..
+                            } => (uri, blob),
                         };
 
                         result.push(ResourceItem::new(
@@ -595,7 +668,8 @@ impl ExtensionManager {
         let mut result = Vec::new();
         for content in read_result.contents {
             // Only reading the text resource content; skipping the blob content cause it's too long
-            if let ResourceContents::TextResourceContents { text, .. } = content {
+            if let ResourceContents::TextResourceContents { text, .. } = content
+            {
                 let content_str = format!("{}\n\n{}", uri, text);
                 result.push(Content::text(content_str));
             }
@@ -819,16 +893,10 @@ impl ExtensionManager {
                     ExtensionConfig::Sse {
                         description, name, ..
                     }
-                    | ExtensionConfig::StreamableHttp {
-                        description, name, ..
-                    }
                     | ExtensionConfig::Stdio {
                         description, name, ..
-                    }
-                    | ExtensionConfig::InlinePython {
-                        description, name, ..
                     } => {
-                        // For SSE/StreamableHttp/Stdio/InlinePython, use description if available
+                        // For SSE/Stdio, use description if available
                         description
                             .as_ref()
                             .map(|s| s.to_string())
@@ -872,20 +940,15 @@ impl ExtensionManager {
     }
 }
 
-fn resource_is_active(resource: &Resource) -> bool {
-    resource.priority().is_some_and(|p| (p - 1.0).abs() < 1e-6)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use mcp_client::client::Error;
     use mcp_client::client::McpClientTrait;
     use mcp_core::protocol::{
-        CallToolResult, InitializeResult, ListPromptsResult, ListResourcesResult, ListToolsResult,
-        ReadResourceResult,
+        CallToolResult, GetPromptResult, InitializeResult, JsonRpcMessage, ListPromptsResult,
+        ListResourcesResult, ListToolsResult, ReadResourceResult,
     };
-    use rmcp::model::{GetPromptResult, ServerNotification};
     use serde_json::json;
     use tokio::sync::mpsc;
 
@@ -941,7 +1004,7 @@ mod tests {
             Err(Error::NotInitialized)
         }
 
-        async fn subscribe(&self) -> mpsc::Receiver<ServerNotification> {
+        async fn subscribe(&self) -> mpsc::Receiver<JsonRpcMessage> {
             mpsc::channel(1).1
         }
     }

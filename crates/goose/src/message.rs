@@ -8,8 +8,7 @@ use std::collections::HashSet;
 /// The content of the messages uses MCP types to avoid additional conversions
 /// when interacting with MCP servers.
 use chrono::Utc;
-use mcp_core::handler::ToolResult;
-use mcp_core::tool::ToolCall;
+use mcp_core::{ToolCall, ToolResult};
 use rmcp::model::ResourceContents;
 use rmcp::model::Role;
 use rmcp::model::{
@@ -68,6 +67,30 @@ pub struct ToolConfirmationRequest {
     pub prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ToSchema)]
+pub struct SecurityConfirmationRequest {
+    pub id: String,
+    pub threat_level: String,
+    pub explanation: String,
+    pub flagged_content: String,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ToSchema)]
+pub struct SecurityNoteMessage {
+    pub finding_id: String,
+    pub content_type: String, // "user_message", "file_content", etc.
+    pub threat_level: String, // "low", "medium", "high", "critical"
+    pub explanation: String,
+    pub action_taken: String, // "processed_with_note", "blocked"
+    pub show_feedback_options: bool,
+    pub timestamp: String, // ISO 8601 timestamp
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ThinkingContent {
     pub thinking: String,
@@ -107,6 +130,8 @@ pub enum MessageContent {
     ToolRequest(ToolRequest),
     ToolResponse(ToolResponse),
     ToolConfirmationRequest(ToolConfirmationRequest),
+    SecurityConfirmationRequest(SecurityConfirmationRequest),
+    SecurityNote(SecurityNoteMessage),
     FrontendToolRequest(FrontendToolRequest),
     Thinking(ThinkingContent),
     RedactedThinking(RedactedThinkingContent),
@@ -116,17 +141,22 @@ pub enum MessageContent {
 
 impl MessageContent {
     pub fn text<S: Into<String>>(text: S) -> Self {
-        MessageContent::Text(RawTextContent { text: text.into() }.no_annotation())
+        MessageContent::Text(TextContent {
+            raw: RawTextContent {
+                text: text.into(),
+            },
+            annotations: None,
+        })
     }
 
     pub fn image<S: Into<String>, T: Into<String>>(data: S, mime_type: T) -> Self {
-        MessageContent::Image(
-            RawImageContent {
+        MessageContent::Image(ImageContent {
+            raw: RawImageContent {
                 data: data.into(),
                 mime_type: mime_type.into(),
-            }
-            .no_annotation(),
-        )
+            },
+            annotations: None,
+        })
     }
 
     pub fn tool_request<S: Into<String>>(id: S, tool_call: ToolResult<ToolCall>) -> Self {
@@ -154,6 +184,42 @@ impl MessageContent {
             tool_name,
             arguments,
             prompt,
+        })
+    }
+
+    pub fn security_confirmation_request<S: Into<String>>(
+        id: S,
+        threat_level: String,
+        explanation: String,
+        flagged_content: String,
+        prompt: Option<String>,
+    ) -> Self {
+        MessageContent::SecurityConfirmationRequest(SecurityConfirmationRequest {
+            id: id.into(),
+            threat_level,
+            explanation,
+            flagged_content,
+            prompt,
+        })
+    }
+
+    pub fn security_note(
+        finding_id: String,
+        content_type: String,
+        threat_level: String,
+        explanation: String,
+        action_taken: String,
+        show_feedback_options: bool,
+        timestamp: String,
+    ) -> Self {
+        MessageContent::SecurityNote(SecurityNoteMessage {
+            finding_id,
+            content_type,
+            threat_level,
+            explanation,
+            action_taken,
+            show_feedback_options,
+            timestamp,
         })
     }
 
@@ -216,12 +282,28 @@ impl MessageContent {
         }
     }
 
+    pub fn as_security_confirmation_request(&self) -> Option<&SecurityConfirmationRequest> {
+        if let MessageContent::SecurityConfirmationRequest(ref security_confirmation_request) = self {
+            Some(security_confirmation_request)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_security_note(&self) -> Option<&SecurityNoteMessage> {
+        if let MessageContent::SecurityNote(ref security_note) = self {
+            Some(security_note)
+        } else {
+            None
+        }
+    }
+
     pub fn as_tool_response_text(&self) -> Option<String> {
         if let Some(tool_response) = self.as_tool_response() {
             if let Ok(contents) = &tool_response.tool_result {
                 let texts: Vec<String> = contents
                     .iter()
-                    .filter_map(|content| content.as_text().map(|t| t.text.to_string()))
+                    .filter_map(|content| content.raw.as_text().map(|t| t.text.clone()))
                     .collect();
                 if !texts.is_empty() {
                     return Some(texts.join("\n"));
@@ -234,7 +316,7 @@ impl MessageContent {
     /// Get the text content if this is a TextContent variant
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            MessageContent::Text(text) => Some(&text.text),
+            MessageContent::Text(text) => Some(&text.raw.text),
             _ => None,
         }
     }
@@ -259,24 +341,30 @@ impl MessageContent {
 impl From<Content> for MessageContent {
     fn from(content: Content) -> Self {
         match content.raw {
-            RawContent::Text(text) => {
-                MessageContent::Text(text.optional_annotate(content.annotations))
-            }
-            RawContent::Image(image) => {
-                MessageContent::Image(image.optional_annotate(content.annotations))
-            }
+            RawContent::Text(text) => MessageContent::Text(TextContent {
+                raw: text,
+                annotations: content.annotations,
+            }),
+            RawContent::Image(image) => MessageContent::Image(ImageContent {
+                raw: image,
+                annotations: content.annotations,
+            }),
             RawContent::Resource(resource) => {
                 let text = match &resource.resource {
                     ResourceContents::TextResourceContents { text, .. } => text.clone(),
-                    ResourceContents::BlobResourceContents { blob, .. } => {
-                        format!("[Binary content: {}]", blob.clone())
-                    }
+                    ResourceContents::BlobResourceContents { blob, .. } => blob.clone(),
                 };
-                MessageContent::text(text)
-            }
-            RawContent::Audio(_) => {
-                MessageContent::text("[Audio content: not supported]".to_string())
-            }
+                MessageContent::Text(TextContent {
+                    raw: RawTextContent { text },
+                    annotations: content.annotations,
+                })
+            },
+            RawContent::Audio(_) => MessageContent::Text(TextContent {
+                raw: RawTextContent {
+                    text: "[Audio content not supported]".to_string(),
+                },
+                annotations: content.annotations,
+            }),
         }
     }
 }
@@ -297,12 +385,12 @@ impl From<PromptMessage> for Message {
             }
             PromptMessageContent::Resource { resource } => {
                 // For resources, convert to text content with the resource text
-                match &resource.resource {
+                match resource.resource {
                     ResourceContents::TextResourceContents { text, .. } => {
-                        MessageContent::text(text.clone())
+                        MessageContent::text(text)
                     }
                     ResourceContents::BlobResourceContents { blob, .. } => {
-                        MessageContent::text(format!("[Binary content: {}]", blob.clone()))
+                        MessageContent::text(format!("[Binary content: {}]", blob))
                     }
                 }
             }
@@ -320,26 +408,6 @@ pub struct Message {
     pub role: Role,
     pub created: i64,
     pub content: Vec<MessageContent>,
-}
-
-pub fn push_message(messages: &mut Vec<Message>, message: Message) {
-    if let Some(last) = messages
-        .last_mut()
-        .filter(|m| m.id.is_some() && m.id == message.id)
-    {
-        match (last.content.last_mut(), message.content.last()) {
-            (Some(MessageContent::Text(ref mut last)), Some(MessageContent::Text(new)))
-                if message.content.len() == 1 =>
-            {
-                last.text.push_str(&new.text);
-            }
-            (_, _) => {
-                last.content.extend(message.content);
-            }
-        }
-    } else {
-        messages.push(message);
-    }
 }
 
 impl Message {
@@ -416,6 +484,42 @@ impl Message {
     ) -> Self {
         self.with_content(MessageContent::tool_confirmation_request(
             id, tool_name, arguments, prompt,
+        ))
+    }
+
+    /// Add a security confirmation request to the message
+    pub fn with_security_confirmation_request<S: Into<String>>(
+        self,
+        id: S,
+        threat_level: String,
+        explanation: String,
+        flagged_content: String,
+        prompt: Option<String>,
+    ) -> Self {
+        self.with_content(MessageContent::security_confirmation_request(
+            id, threat_level, explanation, flagged_content, prompt,
+        ))
+    }
+
+    /// Add a security note to the message
+    pub fn with_security_note(
+        self,
+        finding_id: String,
+        content_type: String,
+        threat_level: String,
+        explanation: String,
+        action_taken: String,
+        show_feedback_options: bool,
+        timestamp: String,
+    ) -> Self {
+        self.with_content(MessageContent::security_note(
+            finding_id,
+            content_type,
+            threat_level,
+            explanation,
+            action_taken,
+            show_feedback_options,
+            timestamp,
         ))
     }
 
@@ -522,6 +626,26 @@ impl Message {
     }
 }
 
+pub fn push_message(messages: &mut Vec<Message>, message: Message) {
+    if let Some(last) = messages
+        .last_mut()
+        .filter(|m| m.id.is_some() && m.id == message.id)
+    {
+        match (last.content.last_mut(), message.content.last()) {
+            (Some(MessageContent::Text(ref mut last)), Some(MessageContent::Text(new)))
+                if message.content.len() == 1 =>
+            {
+                last.raw.text.push_str(&new.raw.text);
+            }
+            _ => {
+                last.content.extend(message.content);
+            }
+        }
+    } else {
+        messages.push(message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,7 +747,7 @@ mod tests {
 
         // Check first content item
         if let MessageContent::Text(text) = &message.content[0] {
-            assert_eq!(text.text, "I'll help you with that.");
+            assert_eq!(text.raw.text, "I'll help you with that.");
         } else {
             panic!("Expected Text content");
         }
@@ -656,7 +780,7 @@ mod tests {
         let message = Message::from(prompt_message);
 
         if let MessageContent::Text(text_content) = &message.content[0] {
-            assert_eq!(text_content.text, "Hello, world!");
+            assert_eq!(text_content.raw.text, "Hello, world!");
         } else {
             panic!("Expected MessageContent::Text");
         }
@@ -665,11 +789,13 @@ mod tests {
     #[test]
     fn test_from_prompt_message_image() {
         let prompt_content = PromptMessageContent::Image {
-            image: RawImageContent {
-                data: "base64data".to_string(),
-                mime_type: "image/jpeg".to_string(),
-            }
-            .no_annotation(),
+            image: ImageContent {
+                raw: RawImageContent {
+                    data: "base64data".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                },
+                annotations: None,
+            },
         };
 
         let prompt_message = PromptMessage {
@@ -680,8 +806,8 @@ mod tests {
         let message = Message::from(prompt_message);
 
         if let MessageContent::Image(image_content) = &message.content[0] {
-            assert_eq!(image_content.data, "base64data");
-            assert_eq!(image_content.mime_type, "image/jpeg");
+            assert_eq!(image_content.raw.data, "base64data");
+            assert_eq!(image_content.raw.mime_type, "image/jpeg");
         } else {
             panic!("Expected MessageContent::Image");
         }
@@ -707,7 +833,7 @@ mod tests {
         let message = Message::from(prompt_message);
 
         if let MessageContent::Text(text_content) = &message.content[0] {
-            assert_eq!(text_content.text, "Resource content");
+            assert_eq!(text_content.raw.text, "Resource content");
         } else {
             panic!("Expected MessageContent::Text");
         }
@@ -733,7 +859,7 @@ mod tests {
         let message = Message::from(prompt_message);
 
         if let MessageContent::Text(text_content) = &message.content[0] {
-            assert_eq!(text_content.text, "[Binary content: binary_data]");
+            assert_eq!(text_content.raw.text, "[Binary content: binary_data]");
         } else {
             panic!("Expected MessageContent::Text");
         }

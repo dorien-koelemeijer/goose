@@ -83,7 +83,7 @@ function getStreamableHttpConfig(
 ) {
   const config: ExtensionConfig = {
     name,
-    type: 'streamable_http',
+    type: 'sse', // TODO: Use proper streamable_http type when available
     uri: remoteUrl,
     description,
     timeout: timeout,
@@ -147,12 +147,12 @@ export async function addExtensionFromDeepLink(
 
   const config = remoteUrl
     ? transportType === 'streamable_http'
-      ? getStreamableHttpConfig(remoteUrl, name, description || '', timeout)
+      ? getStreamableHttpConfig(remoteUrl, name, description || '', timeout) // This will create an SSE config for now
       : getSseConfig(remoteUrl, name, description || '', timeout)
     : getStdioConfig(cmd!, parsedUrl, name, description || '', timeout);
 
   // Check if extension requires env vars and go to settings if so
-  if (config.envs && Object.keys(config.envs).length > 0) {
+  if ('envs' in config && config.envs && Object.keys(config.envs).length > 0) {
     console.log('Environment variables required, redirecting to settings');
     console.log('Calling setView with:', { deepLinkConfig: config, showEnvVars: true });
     setView('settings', { deepLinkConfig: config, showEnvVars: true });

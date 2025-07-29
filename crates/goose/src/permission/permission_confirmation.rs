@@ -9,6 +9,14 @@ pub enum Permission {
     DenyOnce,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum SecurityPermission {
+    AllowOnce,
+    DenyOnce,
+    AlwaysAllow, // For this type of threat
+    NeverAllow,  // For this type of threat
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub enum PrincipalType {
     Extension,
@@ -19,4 +27,10 @@ pub enum PrincipalType {
 pub struct PermissionConfirmation {
     pub principal_type: PrincipalType,
     pub permission: Permission,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SecurityConfirmation {
+    pub permission: SecurityPermission,
+    pub threat_level: String,
 }

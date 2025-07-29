@@ -454,7 +454,7 @@ impl Provider for DatabricksProvider {
         let response = self.post(&payload).await?;
 
         // Parse response
-        let message = response_to_message(&response)?;
+        let message = response_to_message(response.clone())?;
         let usage = response.get("usage").map(get_usage).unwrap_or_else(|| {
             tracing::debug!("Failed to get usage data");
             Usage::default()

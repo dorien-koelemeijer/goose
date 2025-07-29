@@ -333,7 +333,7 @@ export async function deleteRecipe(recipeName: string, isGlobal: boolean): Promi
  * @returns A sanitized filename suitable for use as a recipe name
  */
 export function generateRecipeFilename(recipe: Recipe): string {
-  const baseName = recipe.title
+  const baseName = (recipe.title || 'untitled-recipe')
     .toLowerCase()
     .replace(/[^a-zA-Z0-9\s-]/g, '')
     .replace(/\s+/g, '-')

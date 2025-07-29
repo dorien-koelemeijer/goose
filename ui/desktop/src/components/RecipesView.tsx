@@ -749,7 +749,7 @@ Parameters you can use:
                 <div>
                   <h4 className="text-sm font-medium text-text-standard mb-2">Extensions</h4>
                   <div className="space-y-2">
-                    {selectedRecipe.recipe.extensions.map((extension, index) => {
+                    {selectedRecipe.recipe.extensions.map((extension, index: number) => {
                       const extWithDetails = extension as typeof extension & {
                         version?: string;
                         type?: string;
@@ -915,7 +915,7 @@ Parameters you can use:
                 <div>
                   <h4 className="text-sm font-medium text-text-standard mb-2">Context</h4>
                   <div className="space-y-2">
-                    {selectedRecipe.recipe.context.map((contextItem, index) => (
+                    {selectedRecipe.recipe.context.map((contextItem: string, index: number) => (
                       <div
                         key={index}
                         className="bg-background-muted border border-border-subtle p-2 rounded text-sm text-text-muted font-mono"

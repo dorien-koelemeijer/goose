@@ -29,16 +29,8 @@ export const getBinaryPath = (app: Electron.App, binaryName: string): string => 
     if (binaryName === 'goosed') {
       return path.join(process.resourcesPath, 'bin', 'goosed.exe');
     }
-
-    // Map binary names to their Windows equivalents
-    const windowsBinaryMap: Record<string, string> = {
-      npx: 'npx.cmd',
-      uvx: 'uvx.exe',
-    };
-
-    // For other binaries, use Windows-specific extensions if available
-    const windowsBinary = windowsBinaryMap[binaryName] || binaryName;
-    return windowsBinary;
+    // For other binaries (uvx, npx), rely on PATH we just patched
+    return binaryName;
   }
 
   // For non-Windows platforms, use the original logic
@@ -96,6 +88,17 @@ const addPaths = (
       path.join(process.cwd(), 'bin', executableName),
       path.join(process.cwd(), '..', '..', 'target', 'release', executableName)
     );
+
+    // For development, also try to use system binaries if they're common tools
+    if ((executableName === 'npx' || executableName === 'uvx') && !isWindows) {
+      // Add common system locations for these tools
+      possiblePaths.push(
+        `/Applications/Goose.app/Contents/Resources/bin/${executableName}`, // Current system location
+        `/usr/local/bin/${executableName}`,
+        `/opt/homebrew/bin/${executableName}`,
+        `/usr/bin/${executableName}`
+      );
+    }
   } else {
     possiblePaths.push(
       path.join(process.resourcesPath, 'bin', executableName),

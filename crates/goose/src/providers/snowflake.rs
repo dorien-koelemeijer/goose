@@ -429,7 +429,7 @@ impl Provider for SnowflakeProvider {
         let response = self.post(&payload).await?;
 
         // Parse response
-        let message = response_to_message(&response)?;
+        let message = response_to_message(response.clone())?;
         let usage = get_usage(&response)?;
         let model = get_model(&response);
         super::utils::emit_debug_trace(&self.model, &payload, &response, &usage);

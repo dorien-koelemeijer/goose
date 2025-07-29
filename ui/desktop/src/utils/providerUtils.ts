@@ -10,13 +10,17 @@ import { extractExtensionConfig } from '../components/settings/extensions/utils'
 import type { ExtensionConfig, FixedExtensionEntry } from '../components/ConfigContext';
 // TODO: remove when removing migration logic
 import { toastService } from '../toasts';
-import {
-  ExtensionQuery,
-  RecipeParameter,
-  SubRecipe,
-  addExtension as apiAddExtension,
-} from '../api';
-import { addSubRecipesToAgent } from '../recipe/add_sub_recipe_on_agent';
+import { ExtensionQuery, addExtension as apiAddExtension } from '../api';
+import { RecipeParameter } from '../recipe';
+// import { addSubRecipesToAgent } from '../recipe/add_sub_recipe_on_agent';
+
+// TODO: Define SubRecipe type when API is available
+export interface SubRecipe {
+  name?: string;
+  path?: string;
+  description?: string;
+  values?: Record<string, string>;
+}
 
 export interface Provider {
   id: string; // Lowercase key (e.g., "openai")
@@ -121,7 +125,7 @@ export const updateSystemPromptWithParameters = async (
         }
       }
     }
-    await addSubRecipesToAgent(subRecipes);
+    // await addSubRecipesToAgent(subRecipes);
   }
 };
 
@@ -163,10 +167,18 @@ export const migrateExtensionsToSettingsV3 = async () => {
     if (extension.type !== 'builtin') {
       console.log(`Migrating extension ${extension.name} to config.yaml`);
       try {
+        // Skip unsupported extension types
+        if ((extension as { type: string }).type === 'streamable_http') {
+          console.log(
+            `Skipping migration of ${extension.name}: streamable_http type not supported in current API`
+          );
+          continue;
+        }
+
         // manually import apiAddExtension to set throwOnError true
         const query: ExtensionQuery = {
           name: extension.name,
-          config: extension,
+          config: extension as ExtensionConfig,
           enabled: extension.enabled,
         };
         await apiAddExtension({
@@ -239,7 +251,7 @@ export const initializeSystem = async (
       console.log('Extended system prompt with desktop-specific information');
     }
     if (!hasParameters && hasSubRecipes) {
-      await addSubRecipesToAgent(subRecipes);
+      // await addSubRecipesToAgent(subRecipes);
     }
     // Configure session with response config if present
     if (responseConfig?.json_schema) {

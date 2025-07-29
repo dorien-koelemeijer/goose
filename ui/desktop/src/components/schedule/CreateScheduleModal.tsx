@@ -131,8 +131,8 @@ async function parseDeepLink(deepLink: string): Promise<Recipe | null> {
 function recipeToYaml(recipe: Recipe, executionMode: ExecutionMode): string {
   // Create a clean recipe object for YAML conversion
   const cleanRecipe: CleanRecipe = {
-    title: recipe.title,
-    description: recipe.description,
+    title: recipe.title || 'Untitled Recipe',
+    description: recipe.description || 'No description provided',
   };
 
   if (recipe.instructions) {
@@ -216,7 +216,12 @@ function recipeToYaml(recipe: Recipe, executionMode: ExecutionMode): string {
       }
 
       // Add common optional fields
-      if ('env_keys' in ext && ext.env_keys && ext.env_keys.length > 0) {
+      if (
+        'env_keys' in ext &&
+        ext.env_keys &&
+        Array.isArray(ext.env_keys) &&
+        ext.env_keys.length > 0
+      ) {
         cleanExt.env_keys = ext.env_keys;
       }
 
@@ -241,7 +246,7 @@ function recipeToYaml(recipe: Recipe, executionMode: ExecutionMode): string {
   }
 
   if (recipe.context && recipe.context.length > 0) {
-    cleanRecipe.context = recipe.context;
+    cleanRecipe.context = recipe.context as string[];
   }
 
   if (recipe.profile) {
