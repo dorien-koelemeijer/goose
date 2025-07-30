@@ -41,6 +41,7 @@ use crate::providers::base::Provider;
 use crate::providers::errors::ProviderError;
 use crate::recipe::{Author, Recipe, Response, Settings, SubRecipe};
 use crate::scheduler_trait::SchedulerTrait;
+use crate::security::SecurityIntegration;
 use crate::tool_monitor::{ToolCall, ToolMonitor};
 use crate::utils::is_token_cancelled;
 use mcp_core::{ToolError, ToolResult};
@@ -77,6 +78,7 @@ pub struct Agent {
     pub(super) router_tool_selector: Mutex<Option<Arc<Box<dyn RouterToolSelector>>>>,
     pub(super) scheduler_service: Mutex<Option<Arc<dyn SchedulerTrait>>>,
     pub(super) retry_manager: RetryManager,
+    pub(super) security: SecurityIntegration,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +137,9 @@ impl Agent {
         let tool_monitor = Arc::new(Mutex::new(None));
         let retry_manager = RetryManager::with_tool_monitor(tool_monitor.clone());
 
+        // Initialize security with default (disabled) configuration
+        let security = SecurityIntegration::disabled();
+
         Self {
             provider: Mutex::new(None),
             extension_manager: Arc::new(RwLock::new(ExtensionManager::new())),
@@ -152,12 +157,53 @@ impl Agent {
             router_tool_selector: Mutex::new(None),
             scheduler_service: Mutex::new(None),
             retry_manager,
+            security,
         }
     }
 
     pub async fn configure_tool_monitor(&self, max_repetitions: Option<u32>) {
         let mut tool_monitor = self.tool_monitor.lock().await;
         *tool_monitor = Some(ToolMonitor::new(max_repetitions));
+    }
+
+    /// Configure security for this agent
+    pub async fn configure_security(&mut self, security: SecurityIntegration) {
+        self.security = security;
+    }
+
+    /// Configure security from a config file
+    pub async fn configure_security_from_file<P: AsRef<std::path::Path>>(&mut self, config_path: P) -> Result<()> {
+        use crate::security::SecurityManager;
+        let security_manager = SecurityManager::from_config_file(config_path).await?;
+        let security = security_manager.create_integration();
+        self.security = security;
+        Ok(())
+    }
+
+    /// Configure security with a simple enabled/disabled flag
+    pub async fn configure_security_simple(&mut self, enabled: bool) -> Result<()> {
+        use crate::security::SecurityManager;
+        use goose_security::{SecurityConfig, ScannerType, ResponseMode};
+        
+        if enabled {
+            let config = SecurityConfig {
+                enabled: true,
+                scanner_type: ScannerType::Simple, // Use simple scanner by default
+                response_mode: ResponseMode::Warn,
+                ..SecurityConfig::default()
+            };
+            let security_manager = SecurityManager::new(config);
+            let security = security_manager.create_integration();
+            self.security = security;
+        } else {
+            self.security = SecurityIntegration::disabled();
+        }
+        Ok(())
+    }
+
+    /// Check if security is enabled
+    pub fn is_security_enabled(&self) -> bool {
+        self.security.is_enabled()
     }
 
     pub async fn get_tool_stats(&self) -> Option<HashMap<String, u32>> {
@@ -528,6 +574,16 @@ impl Agent {
     }
 
     pub async fn add_extension(&self, extension: ExtensionConfig) -> ExtensionResult<()> {
+        // Security scan extension configuration
+        let extension_content = vec![Content::text(format!("{:?}", extension))];
+        if !self.security.check_and_handle(&extension_content, goose_security::ContentType::ExtensionDefinition).await
+            .map_err(|e| ExtensionError::SetupError(format!("Security scan failed: {}", e)))? 
+        {
+            return Err(ExtensionError::SetupError(
+                "Extension blocked due to security concerns".to_string()
+            ));
+        }
+
         match &extension {
             ExtensionConfig::Frontend {
                 name: _,
@@ -729,6 +785,26 @@ impl Agent {
             .and_then(|c| c.as_text())
         {
             debug!("user_message" = &content);
+        }
+
+        // Security scanning for user messages
+        if let Some(last_message) = messages.last() {
+            // Convert MessageContent to Content for security scanning
+            let content_for_scan: Vec<Content> = last_message.content
+                .iter()
+                .filter_map(|mc| mc.as_text().map(|text| Content::text(text)))
+                .collect();
+            
+            if !content_for_scan.is_empty() {
+                if !self.security.check_and_handle(&content_for_scan, goose_security::ContentType::UserMessage).await? {
+                    // Message blocked by security
+                    return Ok(Box::pin(async_stream::try_stream! {
+                        yield AgentEvent::Message(Message::assistant().with_text(
+                            "🔒 Your message has been blocked due to security concerns. Please rephrase your request."
+                        ));
+                    }));
+                }
+            }
         }
 
         Ok(Box::pin(async_stream::try_stream! {
@@ -955,14 +1031,27 @@ impl Agent {
                                         }
                                         match item {
                                             ToolStreamItem::Result(output) => {
+                                                // Security scan tool results
+                                                let scanned_output = match &output {
+                                                    Ok(content) => {
+                                                        if !self.security.check_and_handle(content, goose_security::ContentType::ToolResult).await? {
+                                                            // Tool result blocked by security
+                                                            Ok(vec![Content::text("🔒 Tool result blocked due to security concerns.")])
+                                                        } else {
+                                                            output.clone()
+                                                        }
+                                                    }
+                                                    Err(_) => output.clone(), // Don't scan error results
+                                                };
+
                                                 if enable_extension_request_ids.contains(&request_id)
-                                                    && output.is_err()
+                                                    && scanned_output.is_err()
                                                 {
                                                     all_install_successful = false;
                                                 }
                                                 let mut response = message_tool_response.lock().await;
                                                 *response =
-                                                    response.clone().with_tool_response(request_id, output);
+                                                    response.clone().with_tool_response(request_id, scanned_output);
                                             }
                                             ToolStreamItem::Message(msg) => {
                                                 yield AgentEvent::McpNotification((

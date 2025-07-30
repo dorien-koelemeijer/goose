@@ -695,6 +695,64 @@ impl Config {
         };
         Ok(())
     }
+
+    /// Get security configuration from config
+    ///
+    /// This loads the security configuration from the config file,
+    /// with fallback to default values if not configured.
+    pub fn get_security_config(&self) -> Result<goose_security::SecurityConfig, ConfigError> {
+        // Try to get the security config from the config file
+        match self.get_param::<serde_json::Value>("security") {
+            Ok(security_value) => {
+                // Start with default config
+                let mut config = goose_security::SecurityConfig::default();
+                
+                // If we have a security section, merge it with defaults
+                if let serde_json::Value::Object(security_obj) = security_value {
+                    // Apply enabled flag if provided
+                    if let Some(enabled) = security_obj.get("enabled") {
+                        if let Some(enabled_bool) = enabled.as_bool() {
+                            config.enabled = enabled_bool;
+                        }
+                    }
+                    
+                    // Apply model selection if provided
+                    if let Some(model) = security_obj.get("model") {
+                        if let Some(model_str) = model.as_str() {
+                            match model_str.to_lowercase().as_str() {
+                                "simple" => {
+                                    config.scanner_type = goose_security::ScannerType::Simple;
+                                }
+                                "single" | "singleonnx" => {
+                                    config.scanner_type = goose_security::ScannerType::SingleOnnx;
+                                }
+                                "dual" | "dualonnx" | "default" => {
+                                    config.scanner_type = goose_security::ScannerType::DualOnnx;
+                                }
+                                _ => {
+                                    // Unknown model, stick with default
+                                    tracing::warn!("Unknown security model '{}', using default (DualOnnx)", model_str);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Ok(config)
+            }
+            Err(ConfigError::NotFound(_)) => {
+                // If not found, return default config (disabled)
+                Ok(goose_security::SecurityConfig::default())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Set security configuration in config
+    pub fn set_security_config(&self, config: goose_security::SecurityConfig) -> Result<(), ConfigError> {
+        let value = serde_json::to_value(config)?;
+        self.set_param("security", value)
+    }
 }
 
 /// Load init-config.yaml from workspace root if it exists.

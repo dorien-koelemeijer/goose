@@ -30,7 +30,26 @@ pub async fn run() -> Result<()> {
     let secret_key =
         std::env::var("GOOSE_SERVER__SECRET_KEY").unwrap_or_else(|_| "test".to_string());
 
-    let new_agent = Agent::new();
+    let mut new_agent = Agent::new();
+    
+    // Configure security from config file
+    let config = goose::config::Config::global();
+    match config.get_security_config() {
+        Ok(security_config) => {
+            if security_config.enabled {
+                tracing::info!("🔒 Security scanning enabled from config");
+                let security_manager = goose::security::SecurityManager::new(security_config);
+                let security_integration = security_manager.create_integration();
+                new_agent.configure_security(security_integration).await;
+            } else {
+                tracing::info!("🔓 Security scanning disabled in config");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load security config: {}, using disabled security", e);
+        }
+    }
+    
     let agent_ref = Arc::new(new_agent);
 
     let app_state = state::AppState::new(agent_ref.clone(), secret_key.clone()).await;
