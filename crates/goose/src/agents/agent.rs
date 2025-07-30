@@ -183,13 +183,12 @@ impl Agent {
     /// Configure security with a simple enabled/disabled flag
     pub async fn configure_security_simple(&mut self, enabled: bool) -> Result<()> {
         use crate::security::SecurityManager;
-        use goose_security::{SecurityConfig, ScannerType, ResponseMode};
+        use goose_security::{SecurityConfig, ResponseMode};
         
         if enabled {
             let config = SecurityConfig {
                 enabled: true,
-                scanner_type: ScannerType::Simple, // Use simple scanner by default
-                response_mode: ResponseMode::Warn,
+                mode: ResponseMode::Warn,
                 ..SecurityConfig::default()
             };
             let security_manager = SecurityManager::new(config);

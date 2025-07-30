@@ -3733,6 +3733,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dirs 5.0.1",
+ "futures",
  "ndarray",
  "ort",
  "rmcp",

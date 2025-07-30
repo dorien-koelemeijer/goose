@@ -716,23 +716,50 @@ impl Config {
                         }
                     }
                     
-                    // Apply model selection if provided
-                    if let Some(model) = security_obj.get("model") {
-                        if let Some(model_str) = model.as_str() {
-                            match model_str.to_lowercase().as_str() {
-                                "simple" => {
-                                    config.scanner_type = goose_security::ScannerType::Simple;
+                    // Apply mode if provided
+                    if let Some(mode) = security_obj.get("mode") {
+                        if let Some(mode_str) = mode.as_str() {
+                            match mode_str.to_lowercase().as_str() {
+                                "block" | "blocking" => {
+                                    config.mode = goose_security::ResponseMode::Block;
                                 }
-                                "single" | "singleonnx" => {
-                                    config.scanner_type = goose_security::ScannerType::SingleOnnx;
-                                }
-                                "dual" | "dualonnx" | "default" => {
-                                    config.scanner_type = goose_security::ScannerType::DualOnnx;
+                                "warn" | "warning" => {
+                                    config.mode = goose_security::ResponseMode::Warn;
                                 }
                                 _ => {
-                                    // Unknown model, stick with default
-                                    tracing::warn!("Unknown security model '{}', using default (DualOnnx)", model_str);
+                                    tracing::warn!("Unknown security mode '{}', using default (warn)", mode_str);
                                 }
+                            }
+                        }
+                    }
+                    
+                    // Apply models configuration if provided
+                    if let Some(models) = security_obj.get("models") {
+                        if let serde_json::Value::Array(models_array) = models {
+                            let mut parsed_models = Vec::new();
+                            
+                            for model_value in models_array {
+                                if let serde_json::Value::Object(model_obj) = model_value {
+                                    let mut model_config = goose_security::ModelConfig::default();
+                                    
+                                    if let Some(model_name) = model_obj.get("model").and_then(|v| v.as_str()) {
+                                        model_config.model = model_name.to_string();
+                                    }
+                                    
+                                    if let Some(threshold) = model_obj.get("threshold").and_then(|v| v.as_f64()) {
+                                        model_config.threshold = threshold as f32;
+                                    }
+                                    
+                                    if let Some(weight) = model_obj.get("weight").and_then(|v| v.as_f64()) {
+                                        model_config.weight = Some(weight as f32);
+                                    }
+                                    
+                                    parsed_models.push(model_config);
+                                }
+                            }
+                            
+                            if !parsed_models.is_empty() {
+                                config.models = parsed_models;
                             }
                         }
                     }
