@@ -36,17 +36,29 @@ pub async fn run() -> Result<()> {
     let config = goose::config::Config::global();
     match config.get_security_config() {
         Ok(security_config) => {
+            tracing::info!("🔍 Security config loaded: enabled={}, models={}", 
+                security_config.enabled, security_config.models.len());
+            
             if security_config.enabled {
                 tracing::info!("🔒 Security scanning enabled from config");
+                tracing::info!("🔧 Security mode: {:?}", security_config.mode);
+                
+                for (i, model) in security_config.models.iter().enumerate() {
+                    tracing::info!("📦 Model {}: {} (threshold: {}, weight: {:?})", 
+                        i + 1, model.model, model.threshold, model.weight);
+                }
+                
                 let security_manager = goose::security::SecurityManager::new(security_config);
                 let security_integration = security_manager.create_integration();
                 new_agent.configure_security(security_integration).await;
+                
+                tracing::info!("✅ Security system initialized successfully");
             } else {
                 tracing::info!("🔓 Security scanning disabled in config");
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to load security config: {}, using disabled security", e);
+            tracing::error!("❌ Failed to load security config: {}, using disabled security", e);
         }
     }
     

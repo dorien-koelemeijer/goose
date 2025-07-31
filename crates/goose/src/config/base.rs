@@ -704,68 +704,14 @@ impl Config {
         // Try to get the security config from the config file
         match self.get_param::<serde_json::Value>("security") {
             Ok(security_value) => {
-                // Start with default config
-                let mut config = goose_security::SecurityConfig::default();
-                
-                // If we have a security section, merge it with defaults
-                if let serde_json::Value::Object(security_obj) = security_value {
-                    // Apply enabled flag if provided
-                    if let Some(enabled) = security_obj.get("enabled") {
-                        if let Some(enabled_bool) = enabled.as_bool() {
-                            config.enabled = enabled_bool;
-                        }
-                    }
-                    
-                    // Apply mode if provided
-                    if let Some(mode) = security_obj.get("mode") {
-                        if let Some(mode_str) = mode.as_str() {
-                            match mode_str.to_lowercase().as_str() {
-                                "block" | "blocking" => {
-                                    config.mode = goose_security::ResponseMode::Block;
-                                }
-                                "warn" | "warning" => {
-                                    config.mode = goose_security::ResponseMode::Warn;
-                                }
-                                _ => {
-                                    tracing::warn!("Unknown security mode '{}', using default (warn)", mode_str);
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Apply models configuration if provided
-                    if let Some(models) = security_obj.get("models") {
-                        if let serde_json::Value::Array(models_array) = models {
-                            let mut parsed_models = Vec::new();
-                            
-                            for model_value in models_array {
-                                if let serde_json::Value::Object(model_obj) = model_value {
-                                    let mut model_config = goose_security::ModelConfig::default();
-                                    
-                                    if let Some(model_name) = model_obj.get("model").and_then(|v| v.as_str()) {
-                                        model_config.model = model_name.to_string();
-                                    }
-                                    
-                                    if let Some(threshold) = model_obj.get("threshold").and_then(|v| v.as_f64()) {
-                                        model_config.threshold = threshold as f32;
-                                    }
-                                    
-                                    if let Some(weight) = model_obj.get("weight").and_then(|v| v.as_f64()) {
-                                        model_config.weight = Some(weight as f32);
-                                    }
-                                    
-                                    parsed_models.push(model_config);
-                                }
-                            }
-                            
-                            if !parsed_models.is_empty() {
-                                config.models = parsed_models;
-                            }
-                        }
+                // Deserialize directly from the JSON value
+                match serde_json::from_value::<goose_security::SecurityConfig>(security_value) {
+                    Ok(config) => Ok(config),
+                    Err(e) => {
+                        tracing::warn!("Failed to parse security config, using defaults: {}", e);
+                        Ok(goose_security::SecurityConfig::default())
                     }
                 }
-                
-                Ok(config)
             }
             Err(ConfigError::NotFound(_)) => {
                 // If not found, return default config (disabled)

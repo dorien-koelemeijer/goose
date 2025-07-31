@@ -1,0 +1,31 @@
+[package]
+name = "goose-security"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Security scanning and threat detection for Goose AI agent"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+rmcp = { workspace = true }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+futures = "0.3"
+
+# ONNX dependencies (optional, enabled by default for dual model setup)
+ort = { version = "2.0.0-rc.10", optional = true }
+tokenizers = { version = "0.20", optional = true }
+ndarray = { version = "0.16", optional = true }
+
+[features]
+default = ["onnx"]
+onnx = ["ort", "tokenizers", "ndarray"]
