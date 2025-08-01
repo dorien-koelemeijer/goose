@@ -74,23 +74,50 @@ pub enum ResponseMode {
     Block,         // Actually block content (future mode)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ModelBackend {
+    Onnx,
+    HuggingFaceApi,
+    OpenAiModeration,
+    Custom(String),
+}
+
+impl Default for ModelBackend {
+    fn default() -> Self {
+        ModelBackend::Onnx
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
-    pub model: String,           // HuggingFace model name
+    pub model: String,           // Model identifier (HuggingFace name, etc.)
+    #[serde(default)]
+    pub backend: ModelBackend,   // Which backend to use
     pub threshold: f32,          // Default confidence threshold for this model
     pub weight: Option<f32>,     // Weight in ensemble voting
     pub architecture: Option<ModelArchitecture>, // Model architecture info (auto-detected if None)
     pub content_types: Option<ModelContentTypes>, // Per-content-type configuration (optional)
+    
+    // Backend-specific configuration
+    pub api_key: Option<String>, // For API-based backends
+    pub endpoint: Option<String>, // Custom endpoint URL
+    pub timeout: Option<u64>,    // Request timeout in seconds
+    pub extra_config: Option<serde_json::Value>, // Backend-specific extra config
 }
 
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             model: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
+            backend: ModelBackend::Onnx,
             threshold: 0.8,
             weight: Some(1.0),
             architecture: None,
-            content_types: None, // Use defaults if not specified
+            content_types: None,
+            api_key: None,
+            endpoint: None,
+            timeout: Some(30),
+            extra_config: None,
         }
     }
 }
@@ -266,22 +293,7 @@ impl Default for SecurityConfig {
         Self {
             enabled: false,
             mode: ResponseMode::Warn,
-            models: vec![
-                ModelConfig {
-                    model: "deepset/deberta-v3-base-injection".to_string(),
-                    threshold: 0.8,  // Higher threshold to reduce false positives
-                    weight: Some(1.0),
-                    architecture: None,
-                    content_types: None,
-                },
-                ModelConfig {
-                    model: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
-                    threshold: 0.8,  // Higher threshold to reduce false positives
-                    weight: Some(1.0),
-                    architecture: None,
-                    content_types: None,
-                },
-            ],
+            models: vec![], // No default models - must be configured explicitly
             enable_false_positive_reporting: true,
             
             // Enable all scanning by default with sensible thresholds

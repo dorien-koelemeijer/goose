@@ -61,9 +61,25 @@ impl SecurityManager {
     /// Scan content with explicit content type
     pub async fn scan_content_with_type(&self, content: &[Content], content_type: ContentType) -> Result<Option<ScanResult>> {
         // Check if we should scan this content type
-        if !self.config.should_scan_content_type(&content_type) {
+        // First check global config, then check if any model is configured for this content type
+        let should_scan_global = self.config.should_scan_content_type(&content_type);
+        let should_scan_any_model = self.config.models.iter()
+            .any(|model| model.should_scan_content_type(&content_type));
+        
+        if !should_scan_global && !should_scan_any_model {
+            tracing::debug!(
+                content_type = ?content_type,
+                "🚫 Content type disabled in both global and per-model settings"
+            );
             return Ok(None);
         }
+
+        tracing::info!(
+            content_type = ?content_type,
+            global_enabled = should_scan_global,
+            models_enabled = should_scan_any_model,
+            "🔍 Starting security scan for content type"
+        );
 
         self.scanner.scan_content(content, content_type).await
     }

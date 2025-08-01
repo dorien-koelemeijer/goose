@@ -441,45 +441,6 @@ mod onnx_impl {
                 name,
             })
         }
-
-        // Legacy constructor for backward compatibility - will be removed
-        pub fn new(confidence_threshold: f32, response_mode: ResponseMode) -> Self {
-            // Create a minimal config with the old hardcoded models for backward compatibility
-            let models = vec![
-                ModelConfig {
-                    model: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
-                    threshold: confidence_threshold,
-                    weight: Some(1.0),
-                    architecture: None,
-                    content_types: None,
-                },
-                ModelConfig {
-                    model: "deepset/deberta-v3-base-injection".to_string(),
-                    threshold: confidence_threshold,
-                    weight: Some(1.0),
-                    architecture: None,
-                    content_types: None,
-                },
-            ];
-            
-            let config = SecurityConfig {
-                enabled: true,
-                mode: response_mode.clone(),
-                models,
-                ..Default::default()
-            };
-
-            Self::from_config(&config).unwrap_or_else(|_| {
-                // Fallback if config creation fails
-                Self {
-                    scanners: Vec::new(),
-                    weights: Vec::new(),
-                    model_configs: Vec::new(),
-                    response_mode,
-                    name: "DualONNX-Fallback".to_string(),
-                }
-            })
-        }
     }
 
     #[async_trait]
@@ -501,8 +462,21 @@ mod onnx_impl {
             }
 
             if active_scanners.is_empty() {
+                tracing::info!(
+                    content_type = ?content_type,
+                    total_models = self.scanners.len(),
+                    "⚪ No models configured to scan this content type"
+                );
                 return Ok(Some(ScanResult::safe("No-Active-Models".to_string(), content_type)));
             }
+
+            tracing::info!(
+                content_type = ?content_type,
+                active_models = active_scanners.len(),
+                total_models = self.scanners.len(),
+                "🔍 Running security scan with {} active models",
+                active_scanners.len()
+            );
 
             // Run active scanners in parallel
             let scan_futures: Vec<_> = active_scanners
@@ -524,25 +498,29 @@ mod onnx_impl {
                 })
                 .collect();
 
-            // Perform weighted ensemble scoring
+            // Perform weighted ensemble scoring with escalation logic
             let mut weighted_confidence = 0.0;
             let mut total_weight = 0.0;
-            let mut highest_threat_level = ThreatLevel::Safe;
             let mut explanations = Vec::new();
             let mut should_warn = false;
             let mut should_block = false;
+            let mut max_individual_confidence: f32 = 0.0;
+            let mut any_high_confidence_threat = false;
 
             for (i, result) in scan_results.iter().enumerate() {
                 let weight = active_weights.get(i).copied().unwrap_or(1.0);
                 weighted_confidence += result.confidence * weight;
                 total_weight += weight;
 
-                // Track highest threat level
-                if result.threat_level > highest_threat_level {
-                    highest_threat_level = result.threat_level.clone();
+                // Track the highest individual confidence
+                max_individual_confidence = max_individual_confidence.max(result.confidence);
+                
+                // Check for high-confidence individual threats (≥0.9) that should escalate
+                if result.confidence >= 0.9 && result.threat_level != ThreatLevel::Safe {
+                    any_high_confidence_threat = true;
                 }
 
-                // Accumulate warnings and blocks
+                // Accumulate warnings and blocks (any model can trigger these)
                 should_warn = should_warn || result.should_warn;
                 should_block = should_block || result.should_block;
 
@@ -559,31 +537,73 @@ mod onnx_impl {
                 0.0
             };
 
+            // Determine threat level with escalation logic
+            let threat_level = if any_high_confidence_threat {
+                // If any model has high confidence (≥0.9), escalate based on that
+                if max_individual_confidence >= 0.95 {
+                    ThreatLevel::Critical
+                } else if max_individual_confidence >= 0.9 {
+                    ThreatLevel::High
+                } else {
+                    ThreatLevel::Medium
+                }
+            } else {
+                // Otherwise use weighted confidence as before
+                if final_confidence >= 0.9 {
+                    ThreatLevel::Critical
+                } else if final_confidence >= 0.8 {
+                    ThreatLevel::High
+                } else if final_confidence >= 0.6 {
+                    ThreatLevel::Medium
+                } else if final_confidence >= 0.3 {
+                    ThreatLevel::Low
+                } else {
+                    ThreatLevel::Safe
+                }
+            };
+
+            // Override should_warn/should_block based on final threat level and mode
+            let (final_should_warn, final_should_block) = match (&self.response_mode, &threat_level) {
+                (ResponseMode::Warn, ThreatLevel::Safe) => (false, false),
+                (ResponseMode::Warn, _) => (true, false), // Warn mode: warn but don't block
+                (ResponseMode::Block, ThreatLevel::Safe) => (false, false),
+                (ResponseMode::Block, ThreatLevel::Low) => (true, false),
+                (ResponseMode::Block, _) => (true, true), // Block mode: warn and block for medium+
+            };
+
             // Create ensemble explanation
-            let explanation = format!(
-                "Ensemble result from {} active models: {}",
-                active_scanners.len(),
-                explanations.join("; ")
-            );
+            let explanation = if any_high_confidence_threat {
+                format!(
+                    "Ensemble result from {} active models (ESCALATED due to high-confidence threat): {}",
+                    active_scanners.len(),
+                    explanations.join("; ")
+                )
+            } else {
+                format!(
+                    "Ensemble result from {} active models: {}",
+                    active_scanners.len(),
+                    explanations.join("; ")
+                )
+            };
 
             // Create final result
-            let mut final_result = if highest_threat_level == ThreatLevel::Safe {
+            let mut final_result = if threat_level == ThreatLevel::Safe {
                 ScanResult::safe(self.name.clone(), content_type)
             } else {
                 ScanResult::threat(
-                    highest_threat_level,
+                    threat_level,
                     final_confidence,
                     explanation,
                     self.name.clone(),
                     content_type,
-                    should_warn,
-                    should_block,
+                    final_should_warn,
+                    final_should_block,
                 )
             };
 
             // Add ensemble details
             let ensemble_details = serde_json::json!({
-                "ensemble_type": "weighted_average",
+                "ensemble_type": "weighted_average_with_escalation",
                 "active_models": active_scanners.len(),
                 "total_models": self.scanners.len(),
                 "models": active_scanners.iter().map(|s| s.name()).collect::<Vec<_>>(),
@@ -597,6 +617,8 @@ mod onnx_impl {
                     })
                 }).collect::<Vec<_>>(),
                 "weighted_confidence": final_confidence,
+                "max_individual_confidence": max_individual_confidence,
+                "escalation_triggered": any_high_confidence_threat,
                 "total_weight": total_weight
             });
 
@@ -637,9 +659,6 @@ impl DualOnnxScanner {
     pub fn from_config(_: &crate::types::SecurityConfig) -> anyhow::Result<Self> {
         Err(anyhow::anyhow!("ONNX scanner not available (onnx feature not enabled)"))
     }
-    
-    // Legacy constructor for backward compatibility
-    pub fn new(_: f32, _: crate::types::ResponseMode) -> Self { Self }
 }
 
 #[cfg(not(feature = "onnx"))]

@@ -26,7 +26,15 @@ impl SecurityIntegration {
     /// Scan content and handle the result automatically
     /// Returns Ok(true) if content should be allowed, Ok(false) if blocked
     pub async fn check_and_handle(&self, content: &[Content], content_type: ContentType) -> Result<bool> {
+        tracing::info!(
+            content_type = ?content_type,
+            enabled = self.manager.is_enabled(),
+            content_length = content.len(),
+            "🚨 SecurityIntegration::check_and_handle called"
+        );
+
         if !self.manager.is_enabled() {
+            tracing::info!("🚫 Security manager is disabled, allowing content");
             return Ok(true);
         }
 
@@ -35,7 +43,13 @@ impl SecurityIntegration {
                 self.handle_scan_result(&result, &content_type).await;
                 Ok(!result.should_block)
             }
-            None => Ok(true),
+            None => {
+                tracing::info!(
+                    content_type = ?content_type,
+                    "⚪ No scan result returned (content type not configured for scanning)"
+                );
+                Ok(true)
+            }
         }
     }
 
@@ -48,7 +62,15 @@ impl SecurityIntegration {
     async fn handle_scan_result(&self, result: &ScanResult, content_type: &ContentType) {
         match result.threat_level {
             ThreatLevel::Safe => {
-                // No action needed for safe content
+                // Log safe results at INFO level so they're always visible
+                tracing::info!(
+                    threat_level = ?result.threat_level,
+                    confidence = result.confidence,
+                    content_type = ?content_type,
+                    scanner = result.scanner_type,
+                    "🔍 Security scan completed (SAFE): {}",
+                    result.explanation
+                );
             }
             ThreatLevel::Low | ThreatLevel::Medium | ThreatLevel::High | ThreatLevel::Critical => {
                 if result.should_warn {
