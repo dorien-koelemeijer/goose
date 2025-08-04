@@ -108,7 +108,7 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            model: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
+            model: String::new(), // No default model - must be configured explicitly
             backend: ModelBackend::Onnx,
             threshold: 0.8,
             weight: Some(1.0),

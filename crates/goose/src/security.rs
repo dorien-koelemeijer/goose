@@ -6,7 +6,6 @@ use std::path::Path;
 use tokio::fs;
 
 pub mod integration;
-pub mod example_integration_clean;
 
 pub use integration::SecurityIntegration;
 

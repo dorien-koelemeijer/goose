@@ -180,26 +180,6 @@ impl Agent {
         Ok(())
     }
 
-    /// Configure security with a simple enabled/disabled flag
-    pub async fn configure_security_simple(&mut self, enabled: bool) -> Result<()> {
-        use crate::security::SecurityManager;
-        use goose_security::{SecurityConfig, ResponseMode};
-        
-        if enabled {
-            let config = SecurityConfig {
-                enabled: true,
-                mode: ResponseMode::Warn,
-                ..SecurityConfig::default()
-            };
-            let security_manager = SecurityManager::new(config);
-            let security = security_manager.create_integration();
-            self.security = security;
-        } else {
-            self.security = SecurityIntegration::disabled();
-        }
-        Ok(())
-    }
-
     /// Check if security is enabled
     pub fn is_security_enabled(&self) -> bool {
         self.security.is_enabled()
