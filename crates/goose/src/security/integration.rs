@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use anyhow::Result;
 use rmcp::model::Content;
-use tracing::{info, warn, error};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 use crate::security::SecurityManager;
-use goose_security::{ScanResult, ContentType, ThreatLevel};
+use goose_security::{ContentType, ScanResult, ThreatLevel};
 
 /// Helper for integrating security scanning throughout the codebase
 /// This provides a simple interface that can be used anywhere content flows
@@ -25,7 +25,11 @@ impl SecurityIntegration {
 
     /// Scan content and handle the result automatically
     /// Returns Ok(true) if content should be allowed, Ok(false) if blocked
-    pub async fn check_and_handle(&self, content: &[Content], content_type: ContentType) -> Result<bool> {
+    pub async fn check_and_handle(
+        &self,
+        content: &[Content],
+        content_type: ContentType,
+    ) -> Result<bool> {
         tracing::info!(
             content_type = ?content_type,
             enabled = self.manager.is_enabled(),
@@ -38,7 +42,11 @@ impl SecurityIntegration {
             return Ok(true);
         }
 
-        match self.manager.scan_content_with_type(content, content_type.clone()).await? {
+        match self
+            .manager
+            .scan_content_with_type(content, content_type.clone())
+            .await?
+        {
             Some(result) => {
                 self.handle_scan_result(&result, &content_type).await;
                 Ok(!result.should_block)
@@ -54,8 +62,14 @@ impl SecurityIntegration {
     }
 
     /// Scan content and return the result for custom handling
-    pub async fn scan(&self, content: &[Content], content_type: ContentType) -> Result<Option<ScanResult>> {
-        self.manager.scan_content_with_type(content, content_type).await
+    pub async fn scan(
+        &self,
+        content: &[Content],
+        content_type: ContentType,
+    ) -> Result<Option<ScanResult>> {
+        self.manager
+            .scan_content_with_type(content, content_type)
+            .await
     }
 
     /// Handle a scan result (logging, user notifications, etc.)
@@ -111,10 +125,14 @@ impl SecurityIntegration {
             return None;
         }
 
-        let action = if result.should_block { "blocked" } else { "flagged" };
+        let action = if result.should_block {
+            "blocked"
+        } else {
+            "flagged"
+        };
         let confidence_desc = match result.confidence {
             c if c >= 0.9 => "high confidence",
-            c if c >= 0.7 => "medium confidence", 
+            c if c >= 0.7 => "medium confidence",
             _ => "low confidence",
         };
 

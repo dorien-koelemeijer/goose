@@ -172,7 +172,10 @@ impl Agent {
     }
 
     /// Configure security from a config file
-    pub async fn configure_security_from_file<P: AsRef<std::path::Path>>(&mut self, config_path: P) -> Result<()> {
+    pub async fn configure_security_from_file<P: AsRef<std::path::Path>>(
+        &mut self,
+        config_path: P,
+    ) -> Result<()> {
         use crate::security::SecurityManager;
         let security_manager = SecurityManager::from_config_file(config_path).await?;
         let security = security_manager.create_integration();
@@ -555,11 +558,17 @@ impl Agent {
     pub async fn add_extension(&self, extension: ExtensionConfig) -> ExtensionResult<()> {
         // Security scan extension configuration
         let extension_content = vec![Content::text(format!("{:?}", extension))];
-        if !self.security.check_and_handle(&extension_content, goose_security::ContentType::ExtensionDefinition).await
-            .map_err(|e| ExtensionError::SetupError(format!("Security scan failed: {}", e)))? 
+        if !self
+            .security
+            .check_and_handle(
+                &extension_content,
+                goose_security::ContentType::ExtensionDefinition,
+            )
+            .await
+            .map_err(|e| ExtensionError::SetupError(format!("Security scan failed: {}", e)))?
         {
             return Err(ExtensionError::SetupError(
-                "Extension blocked due to security concerns".to_string()
+                "Extension blocked due to security concerns".to_string(),
             ));
         }
 
@@ -766,26 +775,6 @@ impl Agent {
             debug!("user_message" = &content);
         }
 
-        // Security scanning for user messages
-        if let Some(last_message) = messages.last() {
-            // Convert MessageContent to Content for security scanning
-            let content_for_scan: Vec<Content> = last_message.content
-                .iter()
-                .filter_map(|mc| mc.as_text().map(|text| Content::text(text)))
-                .collect();
-            
-            if !content_for_scan.is_empty() {
-                if !self.security.check_and_handle(&content_for_scan, goose_security::ContentType::UserMessage).await? {
-                    // Message blocked by security
-                    return Ok(Box::pin(async_stream::try_stream! {
-                        yield AgentEvent::Message(Message::assistant().with_text(
-                            "🔒 Your message has been blocked due to security concerns. Please rephrase your request."
-                        ));
-                    }));
-                }
-            }
-        }
-
         Ok(Box::pin(async_stream::try_stream! {
             let _ = reply_span.enter();
             let mut turns_taken = 0u32;
@@ -876,6 +865,59 @@ impl Agent {
                                 let (frontend_requests, remaining_requests, filtered_response) =
                                     self.categorize_tool_requests(&response).await;
 
+                                // Security scan tool calls from LLM response
+
+                                let all_tool_requests = [&frontend_requests[..], &remaining_requests[..]].concat();
+                                let mut security_blocked = false;
+                                let mut blocked_tool_name = String::new();
+
+                                tracing::info!(
+                                    num_tool_requests = all_tool_requests.len(),
+                                    security_enabled = self.security.is_enabled(),
+                                    "🔍 Starting tool call security scan"
+                                );
+
+                                for tool_request in &all_tool_requests {
+                                    if let Ok(tool_call) = &tool_request.tool_call {
+                                        // Create content from tool call for security scanning
+                                        let tool_call_content = vec![Content::text(serde_json::json!({
+                                            "user_intent": messages.last().and_then(|m| m.content.first()).and_then(|c| c.as_text()).unwrap_or(""),
+                                            "conversation_context": messages.iter().rev().take(3).map(|m|
+                                                m.content.iter().filter_map(|c| c.as_text()).collect::<Vec<_>>().join(" ")
+                                            ).collect::<Vec<_>>().join(" | "),
+                                            "tool_call": {
+                                                "name": tool_call.name,
+                                                "arguments": tool_call.arguments
+                                            }
+                                        }).to_string())];
+
+                                        // Scan with conversation context - this gives the ML model the full picture
+                                        if !self.security.check_and_handle(&tool_call_content, goose_security::ContentType::UserMessage).await? {
+                                            // Tool call blocked by security
+                                            tracing::warn!(
+                                                tool_name = tool_call.name,
+                                                "🚫 Tool call blocked by security scan during LLM response processing"
+                                            );
+                                            security_blocked = true;
+                                            blocked_tool_name = tool_call.name.clone();
+                                            break;
+                                        } else {
+                                            tracing::info!(
+                                                tool_name = tool_call.name,
+                                                "✅ Tool call passed security scan during LLM response processing"
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // If security blocked any tool call, yield security message and continue to next iteration
+                                if security_blocked {
+                                    yield AgentEvent::Message(Message::assistant().with_text(
+                                        format!("🔒 The requested action '{}' has been blocked by security scanning. The system detected potentially malicious content in the tool call.", blocked_tool_name)
+                                    ));
+                                    continue;
+                                }
+
                                 // Record tool calls in the router selector
                                 let selector = self.router_tool_selector.lock().await.clone();
                                 if let Some(selector) = selector {
@@ -902,6 +944,7 @@ impl Agent {
 
                                 let num_tool_requests = frontend_requests.len() + remaining_requests.len();
                                 if num_tool_requests == 0 {
+                                    tracing::info!("🔍 No tool calls to security scan");
                                     continue;
                                 }
 

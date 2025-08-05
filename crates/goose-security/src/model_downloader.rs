@@ -32,14 +32,21 @@ impl ModelDownloader {
         Ok(Self { cache_dir })
     }
 
-    pub async fn ensure_model_available(&self, model_info: &ModelInfo) -> Result<(PathBuf, PathBuf)> {
+    pub async fn ensure_model_available(
+        &self,
+        model_info: &ModelInfo,
+    ) -> Result<(PathBuf, PathBuf)> {
         let model_path = self.cache_dir.join(&model_info.onnx_filename);
         let tokenizer_path = self.cache_dir.join(&model_info.tokenizer_filename);
-        let metadata_path = self.cache_dir.join(format!("{}_metadata.json", 
-            model_info.hf_model_name.replace("/", "_")));
+        let metadata_path = self.cache_dir.join(format!(
+            "{}_metadata.json",
+            model_info.hf_model_name.replace("/", "_")
+        ));
 
         // Check if conversion is needed
-        let needs_conversion = self.check_conversion_needed(&model_path, &tokenizer_path, &metadata_path, model_info).await?;
+        let needs_conversion = self
+            .check_conversion_needed(&model_path, &tokenizer_path, &metadata_path, model_info)
+            .await?;
 
         if !needs_conversion {
             tracing::info!(
@@ -62,7 +69,8 @@ impl ModelDownloader {
         self.download_and_convert_model(model_info).await?;
 
         // Verify the files were created and are valid
-        self.verify_converted_model(&model_path, &tokenizer_path, &metadata_path).await?;
+        self.verify_converted_model(&model_path, &tokenizer_path, &metadata_path)
+            .await?;
 
         tracing::info!(
             model = %model_info.hf_model_name,
@@ -77,7 +85,7 @@ impl ModelDownloader {
         model_path: &PathBuf,
         tokenizer_path: &PathBuf,
         metadata_path: &PathBuf,
-        model_info: &ModelInfo
+        model_info: &ModelInfo,
     ) -> Result<bool> {
         // 1. Check if required files exist
         if !model_path.exists() || !tokenizer_path.exists() {
@@ -107,13 +115,21 @@ impl ModelDownloader {
         }
 
         // 4. Validate metadata matches expected architecture
-        match self.validate_cached_metadata(metadata_path, model_info).await {
+        match self
+            .validate_cached_metadata(metadata_path, model_info)
+            .await
+        {
             Ok(false) => {
-                tracing::info!("Cached metadata doesn't match expected architecture, conversion needed");
+                tracing::info!(
+                    "Cached metadata doesn't match expected architecture, conversion needed"
+                );
                 return Ok(true);
             }
             Err(e) => {
-                tracing::warn!("Failed to validate metadata: {}, assuming conversion needed", e);
+                tracing::warn!(
+                    "Failed to validate metadata: {}, assuming conversion needed",
+                    e
+                );
                 return Ok(true);
             }
             Ok(true) => {} // Metadata is valid, continue checks
@@ -140,14 +156,14 @@ impl ModelDownloader {
     async fn validate_cached_metadata(
         &self,
         metadata_path: &PathBuf,
-        expected_model_info: &ModelInfo
+        expected_model_info: &ModelInfo,
     ) -> Result<bool> {
         let metadata_content = fs::read_to_string(metadata_path).await?;
         let cached_metadata: serde_json::Value = serde_json::from_str(&metadata_content)?;
 
         // Check if the cached architecture matches what we expect
         let expected_arch = &expected_model_info.architecture;
-        
+
         // Compare key architecture fields
         let cached_model_type = cached_metadata.get("model_type").and_then(|v| v.as_str());
         let expected_model_type = match expected_arch.model_type {
@@ -182,22 +198,22 @@ impl ModelDownloader {
         // 1. Only check periodically (e.g., once per day)
         // 2. Make it configurable
         // 3. Use ETag/Last-Modified headers if available
-        
+
         // For now, we'll skip this check to avoid network overhead
         // In the future, could implement:
         // - Check HuggingFace API for model last_modified date
         // - Compare with cached conversion timestamp
         // - Use git commit hash if available
-        
+
         Ok(false) // Assume no updates for now
     }
 
     async fn quick_onnx_validation(&self, model_path: &PathBuf) -> Result<()> {
         // Quick check to see if ONNX file can be opened
         // This doesn't do full validation but catches obviously corrupted files
-        
+
         use ort::session::Session;
-        
+
         match Session::builder() {
             Ok(builder) => {
                 match builder.commit_from_file(model_path) {
@@ -213,17 +229,23 @@ impl ModelDownloader {
         &self,
         model_path: &PathBuf,
         tokenizer_path: &PathBuf,
-        metadata_path: &PathBuf
+        metadata_path: &PathBuf,
     ) -> Result<()> {
         // Verify all files were created
         if !model_path.exists() {
             return Err(anyhow!("Model file was not created: {:?}", model_path));
         }
         if !tokenizer_path.exists() {
-            return Err(anyhow!("Tokenizer file was not created: {:?}", tokenizer_path));
+            return Err(anyhow!(
+                "Tokenizer file was not created: {:?}",
+                tokenizer_path
+            ));
         }
         if !metadata_path.exists() {
-            return Err(anyhow!("Metadata file was not created: {:?}", metadata_path));
+            return Err(anyhow!(
+                "Metadata file was not created: {:?}",
+                metadata_path
+            ));
         }
 
         // Verify files are not empty
@@ -262,8 +284,10 @@ impl ModelDownloader {
 
         let model_path = self.cache_dir.join(&model_info.onnx_filename);
         let tokenizer_path = self.cache_dir.join(&model_info.tokenizer_filename);
-        let metadata_path = self.cache_dir.join(format!("{}_metadata.json", 
-            model_info.hf_model_name.replace("/", "_")));
+        let metadata_path = self.cache_dir.join(format!(
+            "{}_metadata.json",
+            model_info.hf_model_name.replace("/", "_")
+        ));
 
         // Remove existing files
         if model_path.exists() {
@@ -287,7 +311,7 @@ impl ModelDownloader {
         let metadata_path = self.cache_dir.join(format!("{}_metadata.json", safe_name));
 
         let mut removed_files = 0;
-        
+
         if model_path.exists() {
             fs::remove_file(&model_path).await?;
             removed_files += 1;
@@ -302,7 +326,11 @@ impl ModelDownloader {
         }
 
         if removed_files > 0 {
-            tracing::info!("Cleared cache for model '{}' ({} files removed)", model_name, removed_files);
+            tracing::info!(
+                "Cleared cache for model '{}' ({} files removed)",
+                model_name,
+                removed_files
+            );
         } else {
             tracing::info!("No cached files found for model '{}'", model_name);
         }
@@ -310,14 +338,19 @@ impl ModelDownloader {
         Ok(())
     }
 
-    pub async fn load_model_metadata(&self, model_info: &ModelInfo) -> Result<crate::types::ModelArchitecture> {
-        let metadata_path = self.cache_dir.join(format!("{}_metadata.json", 
-            model_info.hf_model_name.replace("/", "_")));
+    pub async fn load_model_metadata(
+        &self,
+        model_info: &ModelInfo,
+    ) -> Result<crate::types::ModelArchitecture> {
+        let metadata_path = self.cache_dir.join(format!(
+            "{}_metadata.json",
+            model_info.hf_model_name.replace("/", "_")
+        ));
 
         if metadata_path.exists() {
             let metadata_content = fs::read_to_string(&metadata_path).await?;
             let metadata: serde_json::Value = serde_json::from_str(&metadata_content)?;
-            
+
             // Convert JSON metadata to ModelArchitecture
             let model_type = match metadata.get("model_type").and_then(|v| v.as_str()) {
                 Some("SequenceClassification") => crate::types::ModelType::SequenceClassification,
@@ -328,32 +361,47 @@ impl ModelDownloader {
             };
 
             let task = match metadata.get("task").and_then(|v| v.as_str()) {
-                Some("PromptInjectionDetection") => crate::types::ModelTask::PromptInjectionDetection,
+                Some("PromptInjectionDetection") => {
+                    crate::types::ModelTask::PromptInjectionDetection
+                }
                 Some("ToxicityDetection") => crate::types::ModelTask::ToxicityDetection,
                 Some("SentimentAnalysis") => crate::types::ModelTask::SentimentAnalysis,
                 Some(other) => crate::types::ModelTask::Custom(other.to_string()),
                 None => crate::types::ModelTask::PromptInjectionDetection,
             };
 
-            let input_names = metadata.get("input_names")
+            let input_names = metadata
+                .get("input_names")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_else(|| vec!["input_ids".to_string(), "attention_mask".to_string()]);
 
-            let output_names = metadata.get("output_names")
+            let output_names = metadata
+                .get("output_names")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_else(|| vec!["logits".to_string()]);
 
-            let max_sequence_length = metadata.get("max_sequence_length")
+            let max_sequence_length = metadata
+                .get("max_sequence_length")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
 
-            let num_labels = metadata.get("num_labels")
+            let num_labels = metadata
+                .get("num_labels")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
 
-            let label_mapping = metadata.get("label_mapping")
+            let label_mapping = metadata
+                .get("label_mapping")
                 .and_then(|v| v.as_object())
                 .map(|obj| {
                     obj.iter()
@@ -380,18 +428,18 @@ impl ModelDownloader {
         // Set up Python virtual environment with required dependencies
         let venv_dir = self.cache_dir.join("python_venv");
         self.ensure_python_venv(&venv_dir).await?;
-        
+
         let python_script = self.create_conversion_script(model_info).await?;
-        
+
         tracing::info!("Converting model to ONNX format...");
-        
+
         // Use the virtual environment's Python
         let python_exe = if cfg!(windows) {
             venv_dir.join("Scripts").join("python.exe")
         } else {
             venv_dir.join("bin").join("python")
         };
-        
+
         let output = Command::new(&python_exe)
             .arg(&python_script)
             .env("CACHE_DIR", &self.cache_dir)
@@ -425,11 +473,15 @@ impl ModelDownloader {
         if python_exe.exists() {
             // Check if required packages are installed
             let output = Command::new(&python_exe)
-                .args(&["-c", "import torch, transformers, onnx, tokenizers; print('OK')"])
+                .args([
+                    "-c",
+                    "import torch, transformers, onnx, tokenizers; print('OK')",
+                ])
                 .output();
-            
+
             if let Ok(output) = output {
-                if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "OK" {
+                if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "OK"
+                {
                     return Ok(());
                 }
             }
@@ -439,10 +491,15 @@ impl ModelDownloader {
 
         // Create virtual environment
         fs::create_dir_all(venv_dir).await?;
-        
+
         let output = Command::new("python3")
-            .args(&["-m", "venv", venv_dir.to_str()
-                .ok_or_else(|| anyhow!("Invalid venv directory path"))?])
+            .args([
+                "-m",
+                "venv",
+                venv_dir
+                    .to_str()
+                    .ok_or_else(|| anyhow!("Invalid venv directory path"))?,
+            ])
             .output()
             .map_err(|e| anyhow!("Failed to create Python virtual environment: {}", e))?;
 
@@ -462,7 +519,7 @@ impl ModelDownloader {
 
         for package in &packages {
             let output = Command::new(&pip_exe)
-                .args(&["install", package])
+                .args(["install", package])
                 .output()
                 .map_err(|e| anyhow!("Failed to install {}: {}", package, e))?;
 
@@ -476,8 +533,7 @@ impl ModelDownloader {
     }
 
     async fn create_conversion_script(&self, model_info: &ModelInfo) -> Result<PathBuf> {
-        let script_content = format!(
-            r#"#!/usr/bin/env python3
+        let script_content = r#"#!/usr/bin/env python3
 import os
 import sys
 import json
@@ -706,13 +762,14 @@ def main():
 
 if __name__ == "__main__":
     main()
-"#
-        );
+"#.to_string();
 
-        let script_path = self.cache_dir.join(format!("convert_model_{}.py", 
-            model_info.hf_model_name.replace("/", "_").replace("-", "_")));
+        let script_path = self.cache_dir.join(format!(
+            "convert_model_{}.py",
+            model_info.hf_model_name.replace("/", "_").replace("-", "_")
+        ));
         fs::write(&script_path, script_content).await?;
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -741,17 +798,16 @@ impl ModelInfo {
     }
 
     pub fn from_hf_name_with_architecture(
-        hf_model_name: &str, 
-        architecture: Option<crate::types::ModelArchitecture>
+        hf_model_name: &str,
+        architecture: Option<crate::types::ModelArchitecture>,
     ) -> Result<Self> {
         if hf_model_name.is_empty() {
             return Err(anyhow!("Model name cannot be empty"));
         }
-        
+
         let safe_name = hf_model_name.replace("/", "_");
-        let architecture = architecture.unwrap_or_else(|| {
-            Self::detect_architecture_from_name(hf_model_name)
-        });
+        let architecture =
+            architecture.unwrap_or_else(|| Self::detect_architecture_from_name(hf_model_name));
 
         Ok(Self {
             hf_model_name: hf_model_name.to_string(),
@@ -762,11 +818,11 @@ impl ModelInfo {
     }
 
     fn detect_architecture_from_name(model_name: &str) -> crate::types::ModelArchitecture {
-        use crate::types::{ModelArchitecture, ModelType, ModelTask};
-        
+        use crate::types::{ModelArchitecture, ModelTask, ModelType};
+
         // Try to infer architecture from model name patterns
         let lower_name = model_name.to_lowercase();
-        
+
         if lower_name.contains("prompt-injection") || lower_name.contains("injection") {
             ModelArchitecture {
                 model_type: ModelType::SequenceClassification,
@@ -775,10 +831,11 @@ impl ModelInfo {
                 output_names: vec!["logits".to_string()],
                 max_sequence_length: Some(512),
                 num_labels: Some(2),
-                label_mapping: Some([
-                    ("safe".to_string(), 0),
-                    ("injection".to_string(), 1),
-                ].into_iter().collect()),
+                label_mapping: Some(
+                    [("safe".to_string(), 0), ("injection".to_string(), 1)]
+                        .into_iter()
+                        .collect(),
+                ),
             }
         } else if lower_name.contains("toxic") || lower_name.contains("hate") {
             ModelArchitecture {
@@ -788,10 +845,11 @@ impl ModelInfo {
                 output_names: vec!["logits".to_string()],
                 max_sequence_length: Some(512),
                 num_labels: Some(2),
-                label_mapping: Some([
-                    ("non_toxic".to_string(), 0),
-                    ("toxic".to_string(), 1),
-                ].into_iter().collect()),
+                label_mapping: Some(
+                    [("non_toxic".to_string(), 0), ("toxic".to_string(), 1)]
+                        .into_iter()
+                        .collect(),
+                ),
             }
         } else if lower_name.contains("sentiment") {
             ModelArchitecture {
@@ -801,11 +859,15 @@ impl ModelInfo {
                 output_names: vec!["logits".to_string()],
                 max_sequence_length: Some(512),
                 num_labels: Some(3),
-                label_mapping: Some([
-                    ("negative".to_string(), 0),
-                    ("neutral".to_string(), 1),
-                    ("positive".to_string(), 2),
-                ].into_iter().collect()),
+                label_mapping: Some(
+                    [
+                        ("negative".to_string(), 0),
+                        ("neutral".to_string(), 1),
+                        ("positive".to_string(), 2),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
             }
         } else {
             // Default to sequence classification for unknown models
@@ -841,7 +903,9 @@ impl ModelDownloader {
 
 #[cfg(not(feature = "onnx"))]
 impl ModelInfo {
-    pub fn from_hf_name(_: &str) -> anyhow::Result<Self> { 
-        Err(anyhow::anyhow!("ONNX models not available (onnx feature not enabled)"))
+    pub fn from_hf_name(_: &str) -> anyhow::Result<Self> {
+        Err(anyhow::anyhow!(
+            "ONNX models not available (onnx feature not enabled)"
+        ))
     }
 }

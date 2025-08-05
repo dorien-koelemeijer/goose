@@ -54,8 +54,8 @@ impl Default for ModelArchitecture {
 pub enum ScannerType {
     Simple,
     SingleOnnx,
-    DualOnnx,      // Default: uses both deepset and protectai models
-    Ensemble,      // Future: multiple models with voting
+    DualOnnx, // Default: uses both deepset and protectai models
+    Ensemble, // Future: multiple models with voting
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -70,38 +70,33 @@ pub enum ContentType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResponseMode {
-    Warn,          // Process but warn user (initial mode)
-    Block,         // Actually block content (future mode)
+    Warn,  // Process but warn user (initial mode)
+    Block, // Actually block content (future mode)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum ModelBackend {
+    #[default]
     Onnx,
     HuggingFaceApi,
     OpenAiModeration,
     Custom(String),
 }
 
-impl Default for ModelBackend {
-    fn default() -> Self {
-        ModelBackend::Onnx
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
-    pub model: String,           // Model identifier (HuggingFace name, etc.)
+    pub model: String, // Model identifier (HuggingFace name, etc.)
     #[serde(default)]
-    pub backend: ModelBackend,   // Which backend to use
-    pub threshold: f32,          // Default confidence threshold for this model
-    pub weight: Option<f32>,     // Weight in ensemble voting
+    pub backend: ModelBackend, // Which backend to use
+    pub threshold: f32, // Default confidence threshold for this model
+    pub weight: Option<f32>, // Weight in ensemble voting
     pub architecture: Option<ModelArchitecture>, // Model architecture info (auto-detected if None)
     pub content_types: Option<ModelContentTypes>, // Per-content-type configuration (optional)
-    
+
     // Backend-specific configuration
-    pub api_key: Option<String>, // For API-based backends
-    pub endpoint: Option<String>, // Custom endpoint URL
-    pub timeout: Option<u64>,    // Request timeout in seconds
+    pub api_key: Option<String>,                 // For API-based backends
+    pub endpoint: Option<String>,                // Custom endpoint URL
+    pub timeout: Option<u64>,                    // Request timeout in seconds
     pub extra_config: Option<serde_json::Value>, // Backend-specific extra config
 }
 
@@ -126,8 +121,11 @@ impl ModelConfig {
     /// Check if this model should scan the given content type
     pub fn should_scan_content_type(&self, content_type: &ContentType) -> bool {
         let default_content_types = ModelContentTypes::default();
-        let content_types = self.content_types.as_ref().unwrap_or(&default_content_types);
-        
+        let content_types = self
+            .content_types
+            .as_ref()
+            .unwrap_or(&default_content_types);
+
         match content_type {
             ContentType::UserMessage => content_types.user_messages.enabled,
             ContentType::UserUploadedFile => content_types.user_files.enabled,
@@ -137,12 +135,15 @@ impl ModelConfig {
             ContentType::ExternalContent => content_types.external_content.enabled,
         }
     }
-    
+
     /// Get the effective threshold for this model and content type
     pub fn get_threshold_for_content_type(&self, content_type: &ContentType) -> f32 {
         let default_content_types = ModelContentTypes::default();
-        let content_types = self.content_types.as_ref().unwrap_or(&default_content_types);
-        
+        let content_types = self
+            .content_types
+            .as_ref()
+            .unwrap_or(&default_content_types);
+
         let content_config = match content_type {
             ContentType::UserMessage => &content_types.user_messages,
             ContentType::UserUploadedFile => &content_types.user_files,
@@ -151,7 +152,7 @@ impl ModelConfig {
             ContentType::ToolResult => &content_types.tool_results,
             ContentType::ExternalContent => &content_types.external_content,
         };
-        
+
         content_config.threshold.unwrap_or(self.threshold)
     }
 }
@@ -159,7 +160,7 @@ impl ModelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentTypeConfig {
     pub enabled: bool,
-    pub threshold_override: Option<f32>,  // Override global threshold for this content type
+    pub threshold_override: Option<f32>, // Override global threshold for this content type
 }
 
 impl Default for ContentTypeConfig {
@@ -174,7 +175,7 @@ impl Default for ContentTypeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelContentTypeConfig {
     pub enabled: bool,
-    pub threshold: Option<f32>,  // Override model's default threshold for this content type
+    pub threshold: Option<f32>, // Override model's default threshold for this content type
 }
 
 impl Default for ModelContentTypeConfig {
@@ -186,25 +187,13 @@ impl Default for ModelContentTypeConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelContentTypes {
     pub user_messages: ModelContentTypeConfig,
     pub user_files: ModelContentTypeConfig,
     pub extensions: ModelContentTypeConfig,
     pub tool_results: ModelContentTypeConfig,
     pub external_content: ModelContentTypeConfig,
-}
-
-impl Default for ModelContentTypes {
-    fn default() -> Self {
-        Self {
-            user_messages: ModelContentTypeConfig::default(),
-            user_files: ModelContentTypeConfig::default(),
-            extensions: ModelContentTypeConfig::default(),
-            tool_results: ModelContentTypeConfig::default(),
-            external_content: ModelContentTypeConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,10 +258,10 @@ impl ScanResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     pub enabled: bool,
-    pub mode: ResponseMode,                    // "warn" or "block"
-    pub models: Vec<ModelConfig>,              // Per-model configuration
+    pub mode: ResponseMode,       // "warn" or "block"
+    pub models: Vec<ModelConfig>, // Per-model configuration
     pub enable_false_positive_reporting: bool,
-    
+
     // Content-specific settings with per-type thresholds (OPTIONAL - legacy compatibility)
     #[serde(default)]
     pub user_messages: ContentTypeConfig,
@@ -295,7 +284,7 @@ impl Default for SecurityConfig {
             mode: ResponseMode::Warn,
             models: vec![], // No default models - must be configured explicitly
             enable_false_positive_reporting: true,
-            
+
             // Enable all scanning by default with sensible thresholds
             user_messages: ContentTypeConfig::default(),
             user_files: ContentTypeConfig::default(),
@@ -318,8 +307,12 @@ impl SecurityConfig {
             ContentType::ExternalContent => self.external_content.enabled,
         }
     }
-    
-    pub fn get_threshold_for_content_type(&self, content_type: &ContentType, model_threshold: f32) -> f32 {
+
+    pub fn get_threshold_for_content_type(
+        &self,
+        content_type: &ContentType,
+        model_threshold: f32,
+    ) -> f32 {
         let content_config = match content_type {
             ContentType::UserMessage => &self.user_messages,
             ContentType::UserUploadedFile => &self.user_files,
@@ -328,20 +321,20 @@ impl SecurityConfig {
             ContentType::ToolResult => &self.tool_results,
             ContentType::ExternalContent => &self.external_content,
         };
-        
+
         content_config.threshold_override.unwrap_or(model_threshold)
     }
-    
+
     /// Legacy compatibility - get first model's threshold
     pub fn confidence_threshold(&self) -> f32 {
         self.models.first().map(|m| m.threshold).unwrap_or(0.8)
     }
-    
+
     /// Legacy compatibility - get response mode
     pub fn response_mode(&self) -> ResponseMode {
         self.mode.clone()
     }
-    
+
     /// Legacy compatibility - get model names
     pub fn model_names(&self) -> Vec<String> {
         self.models.iter().map(|m| m.model.clone()).collect()

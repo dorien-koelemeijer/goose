@@ -1,12 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
-use rmcp::model::Content;
+use async_trait::async_trait;
 use futures;
-use std::sync::Arc;
+use rmcp::model::Content;
 
+use crate::model_scanner::{extract_text_content, ModelScanner};
 use crate::scanner::SecurityScanner;
-use crate::model_scanner::{ModelScanner, extract_text_content};
-use crate::types::{ScanResult, ContentType, ThreatLevel, ResponseMode, SecurityConfig};
+use crate::types::{ContentType, ResponseMode, ScanResult, SecurityConfig, ThreatLevel};
 
 /// Generic ensemble scanner that can combine any type of model scanners
 pub struct EnsembleScanner {
@@ -32,42 +31,60 @@ impl EnsembleScanner {
     }
 
     pub fn from_config(config: &SecurityConfig) -> Result<Self> {
-        tracing::info!("🔨 EnsembleScanner::from_config called with {} models", config.models.len());
-        
+        tracing::info!(
+            "🔨 EnsembleScanner::from_config called with {} models",
+            config.models.len()
+        );
+
         if config.models.is_empty() {
-            return Err(anyhow::anyhow!("No models configured for security scanning"));
+            return Err(anyhow::anyhow!(
+                "No models configured for security scanning"
+            ));
         }
 
         let mut scanners: Vec<Box<dyn ModelScanner>> = Vec::new();
 
         for (i, model_config) in config.models.iter().enumerate() {
-            tracing::info!("🔄 Processing model {}: {} (backend: {:?})", 
-                i + 1, model_config.model, model_config.backend);
-            
+            tracing::info!(
+                "🔄 Processing model {}: {} (backend: {:?})",
+                i + 1,
+                model_config.model,
+                model_config.backend
+            );
+
             let scanner: Box<dyn ModelScanner> = match &model_config.backend {
                 crate::types::ModelBackend::Onnx => {
                     #[cfg(feature = "onnx")]
                     {
                         Box::new(crate::onnx_model_scanner::OnnxModelScanner::new(
                             model_config.clone(),
-                            config.mode.clone()
+                            config.mode.clone(),
                         )?)
                     }
                     #[cfg(not(feature = "onnx"))]
                     {
-                        return Err(anyhow::anyhow!("ONNX backend requested but onnx feature not enabled"));
+                        return Err(anyhow::anyhow!(
+                            "ONNX backend requested but onnx feature not enabled"
+                        ));
                     }
                 }
                 crate::types::ModelBackend::HuggingFaceApi => {
                     // TODO: Implement HuggingFace API scanner
-                    return Err(anyhow::anyhow!("HuggingFace API backend not yet implemented"));
+                    return Err(anyhow::anyhow!(
+                        "HuggingFace API backend not yet implemented"
+                    ));
                 }
                 crate::types::ModelBackend::OpenAiModeration => {
-                    // TODO: Implement OpenAI moderation scanner  
-                    return Err(anyhow::anyhow!("OpenAI moderation backend not yet implemented"));
+                    // TODO: Implement OpenAI moderation scanner
+                    return Err(anyhow::anyhow!(
+                        "OpenAI moderation backend not yet implemented"
+                    ));
                 }
                 crate::types::ModelBackend::Custom(backend_name) => {
-                    return Err(anyhow::anyhow!("Custom backend '{}' not implemented", backend_name));
+                    return Err(anyhow::anyhow!(
+                        "Custom backend '{}' not implemented",
+                        backend_name
+                    ));
                 }
             };
 
@@ -75,7 +92,10 @@ impl EnsembleScanner {
             scanners.push(scanner);
         }
 
-        tracing::info!("🎯 Created EnsembleScanner with {} scanners", scanners.len());
+        tracing::info!(
+            "🎯 Created EnsembleScanner with {} scanners",
+            scanners.len()
+        );
 
         Ok(Self::new(scanners, config.mode.clone()))
     }
@@ -83,26 +103,36 @@ impl EnsembleScanner {
 
 #[async_trait]
 impl SecurityScanner for EnsembleScanner {
-    async fn scan_content(&self, content: &[Content], content_type: ContentType) -> Result<Option<ScanResult>> {
+    async fn scan_content(
+        &self,
+        content: &[Content],
+        content_type: ContentType,
+    ) -> Result<Option<ScanResult>> {
         if self.scanners.is_empty() {
-            return Ok(Some(ScanResult::safe("No-Models".to_string(), content_type)));
+            return Ok(Some(ScanResult::safe(
+                "No-Models".to_string(),
+                content_type,
+            )));
         }
 
         // Extract text content
         let text_content = extract_text_content(content);
-        
+
         if text_content.is_empty() {
-            return Ok(Some(ScanResult::safe("Empty-Content".to_string(), content_type)));
+            return Ok(Some(ScanResult::safe(
+                "Empty-Content".to_string(),
+                content_type,
+            )));
         }
 
         // Log the content being scanned (for debugging false positives)
         tracing::debug!(
             content_type = ?content_type,
             content_length = text_content.len(),
-            content_preview = if text_content.len() > 100 { 
-                format!("{}...", &text_content[..100]) 
-            } else { 
-                text_content.clone() 
+            content_preview = if text_content.len() > 100 {
+                format!("{}...", &text_content[..100])
+            } else {
+                text_content.clone()
             },
             "🔍 Scanning content"
         );
@@ -122,7 +152,10 @@ impl SecurityScanner for EnsembleScanner {
                 total_models = self.scanners.len(),
                 "⚪ No models configured to scan this content type"
             );
-            return Ok(Some(ScanResult::safe("No-Active-Models".to_string(), content_type)));
+            return Ok(Some(ScanResult::safe(
+                "No-Active-Models".to_string(),
+                content_type,
+            )));
         }
 
         tracing::info!(
@@ -157,7 +190,7 @@ impl SecurityScanner for EnsembleScanner {
 
             // Track the highest individual confidence
             max_individual_confidence = max_individual_confidence.max(result.confidence);
-            
+
             // Check for high-confidence individual threats (≥0.9) that should escalate
             if result.confidence >= 0.9 && result.threat_level != ThreatLevel::Safe {
                 any_high_confidence_threat = true;
@@ -168,7 +201,7 @@ impl SecurityScanner for EnsembleScanner {
             should_block = should_block || result.should_block;
 
             explanations.push(format!(
-                "{} (confidence: {:.3}, weight: {:.1})", 
+                "{} (confidence: {:.3}, weight: {:.1})",
                 result.explanation, result.confidence, weight
             ));
         }
@@ -264,10 +297,10 @@ impl SecurityScanner for EnsembleScanner {
             "escalation_triggered": any_high_confidence_threat,
             "total_weight": total_weight,
             // Include the scanned content for debugging (truncated for logs)
-            "scanned_content": if text_content.len() > 200 { 
-                format!("{}...", &text_content[..200]) 
-            } else { 
-                text_content.clone() 
+            "scanned_content": if text_content.len() > 200 {
+                format!("{}...", &text_content[..200])
+            } else {
+                text_content.clone()
             },
             "content_length": text_content.len()
         });

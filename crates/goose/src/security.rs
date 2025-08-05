@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use anyhow::Result;
+use goose_security::{create_scanner, ContentType, ScanResult, SecurityConfig, SecurityScanner};
 use rmcp::model::Content;
-use goose_security::{SecurityScanner, SecurityConfig, ScanResult, ContentType, create_scanner};
 use std::path::Path;
+use std::sync::Arc;
 use tokio::fs;
 
 pub mod integration;
@@ -26,7 +26,10 @@ impl SecurityManager {
 
     pub fn disabled() -> Self {
         Self {
-            scanner: create_scanner(SecurityConfig { enabled: false, ..SecurityConfig::default() }),
+            scanner: create_scanner(SecurityConfig {
+                enabled: false,
+                ..SecurityConfig::default()
+            }),
             config: SecurityConfig::default(),
         }
     }
@@ -43,7 +46,7 @@ impl SecurityManager {
         } else {
             SecurityConfig::default()
         };
-        
+
         Ok(Self::new(config))
     }
 
@@ -54,17 +57,25 @@ impl SecurityManager {
 
     /// Scan content with automatic content type detection
     pub async fn scan_content(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::UserMessage).await
+        self.scan_content_with_type(content, ContentType::UserMessage)
+            .await
     }
 
     /// Scan content with explicit content type
-    pub async fn scan_content_with_type(&self, content: &[Content], content_type: ContentType) -> Result<Option<ScanResult>> {
+    pub async fn scan_content_with_type(
+        &self,
+        content: &[Content],
+        content_type: ContentType,
+    ) -> Result<Option<ScanResult>> {
         // Check if we should scan this content type
         // First check global config, then check if any model is configured for this content type
         let should_scan_global = self.config.should_scan_content_type(&content_type);
-        let should_scan_any_model = self.config.models.iter()
+        let should_scan_any_model = self
+            .config
+            .models
+            .iter()
             .any(|model| model.should_scan_content_type(&content_type));
-        
+
         if !should_scan_global && !should_scan_any_model {
             tracing::debug!(
                 content_type = ?content_type,
@@ -85,27 +96,33 @@ impl SecurityManager {
 
     /// Convenience methods for different content types
     pub async fn scan_user_message(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::UserMessage).await
+        self.scan_content_with_type(content, ContentType::UserMessage)
+            .await
     }
 
     pub async fn scan_user_file(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::UserUploadedFile).await
+        self.scan_content_with_type(content, ContentType::UserUploadedFile)
+            .await
     }
 
     pub async fn scan_extension(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::ExtensionDefinition).await
+        self.scan_content_with_type(content, ContentType::ExtensionDefinition)
+            .await
     }
 
     pub async fn scan_agent_response(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::AgentResponse).await
+        self.scan_content_with_type(content, ContentType::AgentResponse)
+            .await
     }
 
     pub async fn scan_tool_result(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::ToolResult).await
+        self.scan_content_with_type(content, ContentType::ToolResult)
+            .await
     }
 
     pub async fn scan_external_content(&self, content: &[Content]) -> Result<Option<ScanResult>> {
-        self.scan_content_with_type(content, ContentType::ExternalContent).await
+        self.scan_content_with_type(content, ContentType::ExternalContent)
+            .await
     }
 
     pub fn is_enabled(&self) -> bool {

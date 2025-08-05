@@ -722,7 +722,10 @@ impl Config {
     }
 
     /// Set security configuration in config
-    pub fn set_security_config(&self, config: goose_security::SecurityConfig) -> Result<(), ConfigError> {
+    pub fn set_security_config(
+        &self,
+        config: goose_security::SecurityConfig,
+    ) -> Result<(), ConfigError> {
         let value = serde_json::to_value(config)?;
         self.set_param("security", value)
     }
