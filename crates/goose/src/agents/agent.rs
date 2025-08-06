@@ -775,6 +775,26 @@ impl Agent {
             debug!("user_message" = &content);
         }
 
+
+        // Security scanning for user messages
+        if let Some(last_message) = messages.last() {
+            // Convert MessageContent to Content for security scanning
+            let content_for_scan: Vec<Content> = last_message.content
+                .iter()
+                .filter_map(|mc| mc.as_text().map(|text| Content::text(text)))
+                .collect();
+            
+            if !content_for_scan.is_empty() {
+                if !self.security.check_and_handle(&content_for_scan, goose_security::ContentType::UserMessage).await? {
+                    // Message blocked by security
+                    return Ok(Box::pin(async_stream::try_stream! {
+                        yield AgentEvent::Message(Message::assistant().with_text(
+                            "🔒 Your message has been blocked due to security concerns. Please rephrase your request."
+                        ));
+                    }));
+                }
+            }
+        }
         Ok(Box::pin(async_stream::try_stream! {
             let _ = reply_span.enter();
             let mut turns_taken = 0u32;
@@ -879,8 +899,8 @@ impl Agent {
 
                                 for tool_request in &all_tool_requests {
                                     if let Ok(tool_call) = &tool_request.tool_call {
-                                        // Create content from tool call for security scanning
-                                        let tool_call_content = vec![Content::text(serde_json::json!({
+                                        // Enhanced context collection for security scanning
+                                        let mut enhanced_context = serde_json::json!({
                                             "user_intent": messages.last().and_then(|m| m.content.first()).and_then(|c| c.as_text()).unwrap_or(""),
                                             "conversation_context": messages.iter().rev().take(3).map(|m|
                                                 m.content.iter().filter_map(|c| c.as_text()).collect::<Vec<_>>().join(" ")
@@ -889,10 +909,47 @@ impl Agent {
                                                 "name": tool_call.name,
                                                 "arguments": tool_call.arguments
                                             }
-                                        }).to_string())];
+                                        });
+
+                                        // Enhance context based on tool type
+                                        if tool_call.name == "developer__shell" {
+                                            if let Some(command) = tool_call.arguments.get("command").and_then(|v| v.as_str()) {
+                                                enhanced_context["command_analysis"] = serde_json::json!({
+                                                    "command": command,
+                                                    "risk_patterns": Self::analyze_command_patterns(command),
+                                                    "file_references": Self::extract_file_references(command)
+                                                });
+
+                                                // If command references files, try to read their content
+                                                if let Some(file_paths) = Self::extract_script_paths(command) {
+                                                    let mut file_contents = Vec::new();
+                                                    for path in file_paths {
+                                                        if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                                                            // Limit file size for security scanning
+                                                            let content_len = content.len();
+                                                            let truncated_content = if content_len > 10000 {
+                                                                format!("{}... [TRUNCATED]", &content[..10000])
+                                                            } else {
+                                                                content
+                                                            };
+                                                            file_contents.push(serde_json::json!({
+                                                                "path": path,
+                                                                "content": truncated_content,
+                                                                "size": content_len
+                                                            }));
+                                                        }
+                                                    }
+                                                    if !file_contents.is_empty() {
+                                                        enhanced_context["referenced_files"] = serde_json::json!(file_contents);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        let tool_call_content = vec![Content::text(enhanced_context.to_string())];
 
                                         // Scan with conversation context - this gives the ML model the full picture
-                                        if !self.security.check_and_handle(&tool_call_content, goose_security::ContentType::UserMessage).await? {
+                                        if !self.security.check_and_handle(&tool_call_content, goose_security::ContentType::AgentToolCall).await? {
                                             // Tool call blocked by security
                                             tracing::warn!(
                                                 tool_name = tool_call.name,
@@ -1151,6 +1208,81 @@ impl Agent {
                 tokio::task::yield_now().await;
             }
         }))
+    }
+
+    /// Analyze command patterns for security risks
+    fn analyze_command_patterns(command: &str) -> Vec<String> {
+        let mut risk_patterns = Vec::new();
+        let command_lower = command.to_lowercase();
+        
+        // Dangerous command patterns
+        let dangerous_patterns = [
+            ("rm -rf", "recursive force delete"),
+            ("sudo", "elevated privileges"),
+            ("chmod 777", "overly permissive permissions"),
+            ("wget", "downloading external content"),
+            ("curl", "downloading external content"),
+            ("eval", "code execution"),
+            ("exec", "process execution"),
+            ("|", "command chaining"),
+            ("&&", "conditional execution"),
+            ("--no-preserve-root", "root filesystem access"),
+            (">/dev/null", "output redirection"),
+            ("2>&1", "error redirection"),
+            ("nohup", "background execution"),
+            ("&", "background process"),
+        ];
+        
+        for (pattern, description) in dangerous_patterns {
+            if command_lower.contains(pattern) {
+                risk_patterns.push(format!("{}: {}", pattern, description));
+            }
+        }
+        
+        risk_patterns
+    }
+    
+    /// Extract file references from command
+    fn extract_file_references(command: &str) -> Vec<String> {
+        let mut file_refs = Vec::new();
+        
+        // Simple regex patterns for common file references
+        // This is basic - could be enhanced with proper shell parsing
+        let words: Vec<&str> = command.split_whitespace().collect();
+        
+        for word in words {
+            // Look for script files, config files, etc.
+            if word.ends_with(".sh") || word.ends_with(".py") || word.ends_with(".pl") 
+                || word.ends_with(".rb") || word.ends_with(".js") || word.ends_with(".php")
+                || word.starts_with("./") || word.starts_with("../") {
+                file_refs.push(word.to_string());
+            }
+        }
+        
+        file_refs
+    }
+    
+    /// Extract script paths that should be analyzed for content
+    fn extract_script_paths(command: &str) -> Option<Vec<String>> {
+        let file_refs = Self::extract_file_references(command);
+        if file_refs.is_empty() {
+            None
+        } else {
+            // Filter to only executable scripts
+            let script_paths: Vec<String> = file_refs.into_iter()
+                .filter(|path| {
+                    path.ends_with(".sh") || path.ends_with(".py") || path.ends_with(".pl")
+                    || path.ends_with(".rb") || path.ends_with(".js") || path.ends_with(".php")
+                    || path.starts_with("./") || path.starts_with("../")
+                })
+                .collect();
+            
+            if script_paths.is_empty() {
+                None
+            } else {
+                Some(script_paths)
+            }
+        }
     }
 
     fn determine_goose_mode(session: Option<&SessionConfig>, config: &Config) -> String {

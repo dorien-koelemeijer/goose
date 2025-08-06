@@ -1113,14 +1113,26 @@ async fn run_scheduled_job_internal(
         }
     }?;
 
-    let agent: Agent = Agent::new();
+    let mut agent: Agent = Agent::new();
+
+    // Configure security from global config
+    let global_config = Config::global();
+    if let Ok(security_config) = global_config.get_security_config() {
+        use crate::security::SecurityManager;
+        let security_manager = SecurityManager::new(security_config);
+        let security_integration = security_manager.create_integration();
+        agent.configure_security(security_integration).await;
+        tracing::info!("Security configured for scheduled job agent");
+    } else {
+        tracing::warn!("Failed to load security config, security will be disabled");
+    }
 
     let agent_provider: Arc<dyn GooseProvider>; // Use the aliased GooseProvider
 
     if let Some(provider) = provider_override {
         agent_provider = provider;
     } else {
-        let global_config = Config::global();
+
         let provider_name: String = match global_config.get_param("GOOSE_PROVIDER") {
             Ok(name) => name,
             Err(_) => return Err(JobExecutionError {

@@ -32,8 +32,10 @@ pub async fn run() -> Result<()> {
 
     let mut new_agent = Agent::new();
 
+    tracing::info!("🔧 About to configure security from config file");
     // Configure security from config file
     let config = goose::config::Config::global();
+    tracing::info!("🔧 Got global config, about to get security config");
     match config.get_security_config() {
         Ok(security_config) => {
             tracing::info!(

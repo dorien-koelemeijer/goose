@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+fn default_enable_false_positive_reporting() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Ord, Eq)]
 pub enum ThreatLevel {
@@ -64,6 +67,7 @@ pub enum ContentType {
     UserUploadedFile,
     ExtensionDefinition,
     AgentResponse,
+    AgentToolCall,   // NEW: Agent-proposed tool calls (LLM wants to execute tools)
     ToolResult,
     ExternalContent,
 }
@@ -131,6 +135,7 @@ impl ModelConfig {
             ContentType::UserUploadedFile => content_types.user_files.enabled,
             ContentType::ExtensionDefinition => content_types.extensions.enabled,
             ContentType::AgentResponse => false, // Not included for now
+            ContentType::AgentToolCall => content_types.agent_tool_calls.enabled,
             ContentType::ToolResult => content_types.tool_results.enabled,
             ContentType::ExternalContent => content_types.external_content.enabled,
         }
@@ -149,6 +154,7 @@ impl ModelConfig {
             ContentType::UserUploadedFile => &content_types.user_files,
             ContentType::ExtensionDefinition => &content_types.extensions,
             ContentType::AgentResponse => return self.threshold, // Not configured, use default
+            ContentType::AgentToolCall => &content_types.agent_tool_calls,
             ContentType::ToolResult => &content_types.tool_results,
             ContentType::ExternalContent => &content_types.external_content,
         };
@@ -192,6 +198,7 @@ pub struct ModelContentTypes {
     pub user_messages: ModelContentTypeConfig,
     pub user_files: ModelContentTypeConfig,
     pub extensions: ModelContentTypeConfig,
+    pub agent_tool_calls: ModelContentTypeConfig,  // NEW: Agent-proposed tool calls
     pub tool_results: ModelContentTypeConfig,
     pub external_content: ModelContentTypeConfig,
 }
@@ -260,6 +267,7 @@ pub struct SecurityConfig {
     pub enabled: bool,
     pub mode: ResponseMode,       // "warn" or "block"
     pub models: Vec<ModelConfig>, // Per-model configuration
+    #[serde(default = "default_enable_false_positive_reporting")]
     pub enable_false_positive_reporting: bool,
 
     // Content-specific settings with per-type thresholds (OPTIONAL - legacy compatibility)
@@ -303,6 +311,7 @@ impl SecurityConfig {
             ContentType::UserUploadedFile => self.user_files.enabled,
             ContentType::ExtensionDefinition => self.extensions.enabled,
             ContentType::AgentResponse => self.agent_responses.enabled,
+            ContentType::AgentToolCall => self.user_messages.enabled, // TODO: Add agent_tool_calls field to SecurityConfig
             ContentType::ToolResult => self.tool_results.enabled,
             ContentType::ExternalContent => self.external_content.enabled,
         }
@@ -318,6 +327,7 @@ impl SecurityConfig {
             ContentType::UserUploadedFile => &self.user_files,
             ContentType::ExtensionDefinition => &self.extensions,
             ContentType::AgentResponse => &self.agent_responses,
+            ContentType::AgentToolCall => &self.user_messages, // Use user_messages config for now
             ContentType::ToolResult => &self.tool_results,
             ContentType::ExternalContent => &self.external_content,
         };
