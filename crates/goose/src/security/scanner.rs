@@ -203,8 +203,8 @@ impl PromptInjectionScanner {
 
     /// Combine Gondola BERT model results with pattern matching results
     fn combine_scan_results(&self, pattern_result: &ScanResult, gondola_result: &PromptInjectionResult) -> ScanResult {
-        // Convert Gondola confidence (0.0-1.0) to our scale
-        let gondola_confidence = gondola_result.confidence;
+        // Convert Gondola confidence (f64) to our scale (f32)
+        let gondola_confidence = gondola_result.confidence as f32;
         let gondola_is_malicious = gondola_result.is_injection;
         
         // Take the higher confidence score

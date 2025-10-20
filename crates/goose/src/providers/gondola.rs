@@ -1,11 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::json;
 
 use super::api_client::{ApiClient, AuthMethod};
-use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata, ProviderUsage, Usage};
+use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata, ProviderUsage};
 use super::errors::ProviderError;
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
@@ -133,7 +132,8 @@ impl GondolaProvider {
         let timeout_secs: u64 = global_config.get_param("GONDOLA_TIMEOUT").unwrap_or(30);
 
         // For now, we'll try without explicit authentication, assuming Trogdor handles it
-        let auth = AuthMethod::None;
+        // Use a placeholder bearer token that will be handled by Trogdor
+        let auth = AuthMethod::BearerToken("".to_string());
         let api_client = ApiClient::with_timeout(
             config.endpoint.clone(),
             auth,
@@ -149,7 +149,7 @@ impl GondolaProvider {
 
     /// Create a new GondolaProvider with custom configuration
     pub fn with_config(model: ModelConfig, config: GondolaConfig) -> Result<Self> {
-        let auth = AuthMethod::None;
+        let auth = AuthMethod::BearerToken("".to_string());
         let api_client = ApiClient::with_timeout(
             config.endpoint.clone(),
             auth,
