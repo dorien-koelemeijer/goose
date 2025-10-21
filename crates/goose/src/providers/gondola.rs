@@ -24,13 +24,92 @@ pub struct GondolaConfig {
     pub endpoint: String,
 }
 
+/// Model registry entry containing all configuration for a specific model
+#[derive(Debug, Clone)]
+pub struct ModelRegistryEntry {
+    pub model_name: String,
+    pub version: String,
+    pub source: String,
+    pub endpoint: String,
+}
+
+impl GondolaConfig {
+    /// Get the hardcoded model registry
+    /// This maps model names to their corresponding configuration
+    fn get_model_registry() -> std::collections::HashMap<String, ModelRegistryEntry> {
+        let mut registry = std::collections::HashMap::new();
+        
+        // DeBERTa Prompt Injection v2 model
+        registry.insert(
+            "deberta-prompt-injection-v2".to_string(),
+            ModelRegistryEntry {
+                model_name: "deberta-prompt-injection-v2".to_string(),
+                version: "gmv-zve9abhxe9s7fq1zep5dxd807".to_string(),
+                source: "admin-test".to_string(),
+                endpoint: "https://gondola-ski.stage.sqprod.co".to_string(),
+            },
+        );
+        
+        // Add more models here as they become available
+        // registry.insert(
+        //     "another-model".to_string(),
+        //     ModelRegistryEntry {
+        //         model_name: "another-model".to_string(),
+        //         version: "gmv-xyz123".to_string(),
+        //         source: "production".to_string(),
+        //         endpoint: "https://gondola-prod.sqprod.co".to_string(),
+        //     },
+        // );
+        
+        registry
+    }
+    
+    /// Create configuration from a model name using the registry
+    pub fn from_model_name(model_name: &str) -> Result<Self> {
+        let registry = Self::get_model_registry();
+        
+        let entry = registry.get(model_name).ok_or_else(|| {
+            let available_models: Vec<_> = registry.keys().collect();
+            anyhow::anyhow!(
+                "Unknown Gondola model '{}'. Available models: {:?}",
+                model_name,
+                available_models
+            )
+        })?;
+        
+        Ok(Self {
+            model_name: entry.model_name.clone(),
+            version: entry.version.clone(),
+            source: entry.source.clone(),
+            endpoint: entry.endpoint.clone(),
+        })
+    }
+    
+    /// Get list of available model names from the registry
+    pub fn available_models() -> Vec<String> {
+        Self::get_model_registry().keys().cloned().collect()
+    }
+}
+
 impl Default for GondolaConfig {
     fn default() -> Self {
-        Self {
-            model_name: "deberta-prompt-injection-v2".to_string(),
-            version: "gmv-zve9abhxe9s7fq1zep5dxd807".to_string(),
-            source: "admin-test".to_string(),
-            endpoint: "https://gondola-ski.stage.sqprod.co".to_string(),
+        // Use the first available model as default
+        let registry = Self::get_model_registry();
+        if let Some((_, entry)) = registry.iter().next() {
+            Self {
+                model_name: entry.model_name.clone(),
+                version: entry.version.clone(),
+                source: entry.source.clone(),
+                endpoint: entry.endpoint.clone(),
+            }
+        } else {
+            // Fallback if registry is empty (shouldn't happen)
+            Self {
+                model_name: "deberta-prompt-injection-v2".to_string(),
+                version: "gmv-zve9abhxe9s7fq1zep5dxd807".to_string(),
+                source: "admin-test".to_string(),
+                endpoint: "https://gondola-ski.stage.sqprod.co".to_string(),
+            }
         }
     }
 }
@@ -128,19 +207,48 @@ impl GondolaProvider {
     pub async fn from_env(model: ModelConfig) -> Result<Self> {
         let global_config = crate::config::Config::global();
         
-        let config = GondolaConfig {
-            model_name: global_config
-                .get_param("GONDOLA_MODEL_NAME")
-                .unwrap_or_else(|_| GondolaConfig::default().model_name),
-            version: global_config
-                .get_param("GONDOLA_MODEL_VERSION")
-                .unwrap_or_else(|_| GondolaConfig::default().version),
-            source: global_config
-                .get_param("GONDOLA_SOURCE")
-                .unwrap_or_else(|_| GondolaConfig::default().source),
-            endpoint: global_config
-                .get_param("GONDOLA_ENDPOINT")
-                .unwrap_or_else(|_| GondolaConfig::default().endpoint),
+        // Check if user specified a model name, otherwise use default
+        let model_name = global_config
+            .get_param("PROMPT_MODEL_NAME")
+            .unwrap_or_else(|_| GondolaConfig::default().model_name);
+        
+        // Try to get configuration from the model registry first
+        let config = match GondolaConfig::from_model_name(&model_name) {
+            Ok(registry_config) => {
+                tracing::debug!("🔒 Using Gondola model '{}' from registry", model_name);
+                
+                // Allow environment variables to override registry values if needed
+                GondolaConfig {
+                    model_name: registry_config.model_name,
+                    version: global_config
+                        .get_param("GONDOLA_MODEL_VERSION")
+                        .unwrap_or(registry_config.version),
+                    source: global_config
+                        .get_param("GONDOLA_SOURCE")
+                        .unwrap_or(registry_config.source),
+                    endpoint: global_config
+                        .get_param("GONDOLA_ENDPOINT")
+                        .unwrap_or(registry_config.endpoint),
+                }
+            }
+            Err(e) => {
+                tracing::warn!("🔒 Model '{}' not found in registry: {}. Available models: {:?}", 
+                              model_name, e, GondolaConfig::available_models());
+                
+                // Fallback to manual configuration via environment variables
+                GondolaConfig {
+                    model_name: model_name.clone(),
+                    version: global_config
+                        .get_param("GONDOLA_MODEL_VERSION")
+                        .map_err(|_| anyhow::anyhow!("GONDOLA_MODEL_VERSION is required when using unknown model '{}'", model_name))?,
+                    source: global_config
+                        .get_param("GONDOLA_SOURCE")
+                        .map_err(|_| anyhow::anyhow!("GONDOLA_SOURCE is required when using unknown model '{}'", model_name))?,
+                    endpoint: global_config
+                        .get_param("GONDOLA_ENDPOINT")
+                        .map_err(|_| anyhow::anyhow!("GONDOLA_ENDPOINT is required when using unknown model '{}'", model_name))?,
+                }
+            }
         };
 
         let timeout_secs: u64 = global_config.get_param("GONDOLA_TIMEOUT").unwrap_or(30);
@@ -335,8 +443,8 @@ impl Provider for GondolaProvider {
             vec![ModelInfo::new("deberta-prompt-injection-v2", 512)], // BERT models typically have 512 token limit
             "https://gondola-internal-docs", // Placeholder for internal docs
             vec![
+                ConfigKey::new("PROMPT_MODEL_NAME", false, false, Some("deberta-prompt-injection-v2")),
                 ConfigKey::new("GONDOLA_ENDPOINT", false, false, Some("https://gondola-ski.stage.sqprod.co")),
-                ConfigKey::new("GONDOLA_MODEL_NAME", false, false, Some("deberta-prompt-injection-v2")),
                 ConfigKey::new("GONDOLA_MODEL_VERSION", false, false, Some("gmv-zve9abhxe9s7fq1zep5dxd807")),
                 ConfigKey::new("GONDOLA_SOURCE", false, false, Some("admin-test")),
                 ConfigKey::new("GONDOLA_TIMEOUT", false, false, Some("30")),
@@ -363,9 +471,8 @@ impl Provider for GondolaProvider {
     }
 
     async fn fetch_supported_models(&self) -> Result<Option<Vec<String>>, ProviderError> {
-        // For now, return the configured model
-        // In the future, this could query Gondola for available models
-        Ok(Some(vec![self.config.model_name.clone()]))
+        // Return all models available in the registry
+        Ok(Some(GondolaConfig::available_models()))
     }
 }
 
@@ -430,5 +537,28 @@ mod tests {
         assert_eq!(config.version, "gmv-zve9abhxe9s7fq1zep5dxd807");
         assert_eq!(config.source, "admin-test");
         assert_eq!(config.endpoint, "https://gondola-ski.stage.sqprod.co");
+    }
+
+    #[test]
+    fn test_model_registry() {
+        // Test that we can get available models
+        let models = GondolaConfig::available_models();
+        assert!(!models.is_empty());
+        assert!(models.contains(&"deberta-prompt-injection-v2".to_string()));
+    }
+
+    #[test]
+    fn test_config_from_model_name() {
+        // Test with known model
+        let config = GondolaConfig::from_model_name("deberta-prompt-injection-v2").unwrap();
+        assert_eq!(config.model_name, "deberta-prompt-injection-v2");
+        assert_eq!(config.version, "gmv-zve9abhxe9s7fq1zep5dxd807");
+        assert_eq!(config.source, "admin-test");
+        assert_eq!(config.endpoint, "https://gondola-ski.stage.sqprod.co");
+
+        // Test with unknown model
+        let result = GondolaConfig::from_model_name("unknown-model");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unknown Gondola model"));
     }
 }

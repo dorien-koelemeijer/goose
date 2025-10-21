@@ -1,6 +1,6 @@
 use crate::conversation::message::Message;
 use crate::security::patterns::{PatternMatcher, RiskLevel};
-use crate::security::model_scanner::{GenericModelScanner, ModelScanner};
+use crate::security::model_scanner::GenericModelScanner;
 use anyhow::Result;
 use rmcp::model::CallToolRequestParam;
 use serde_json::Value;
