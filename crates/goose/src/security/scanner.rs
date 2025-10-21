@@ -230,7 +230,7 @@ impl PromptInjectionScanner {
             }
             (true, false) => {
                 format!(
-                    "Detected by pattern analysis (BERT model confidence: {:.3}):\n{}",
+                    "Detected by pattern analysis (BERT model found no injection, confidence: {:.3}):\n{}",
                     gondola_confidence,
                     pattern_result.explanation.replace("Pattern-based detection found ", "")
                 )

@@ -66,7 +66,8 @@ pub struct PromptInjectionResult {
 
 impl PromptInjectionResult {
     /// Create a result from raw Gondola scores
-    /// The model returns [safe_score, injection_score] where higher values indicate stronger confidence
+    /// The model returns [safe_score, injection_score] as logits - higher values indicate stronger confidence
+    /// We need to apply softmax to convert logits to probabilities
     pub fn from_raw_scores(scores: Vec<f64>) -> Self {
         if scores.len() != 2 {
             tracing::warn!("Expected 2 scores from Gondola model, got {}", scores.len());
@@ -77,25 +78,37 @@ impl PromptInjectionResult {
             };
         }
 
-        let safe_score = scores[0];
-        let injection_score = scores[1];
+        let safe_logit = scores[0];
+        let injection_logit = scores[1];
         
-        // Determine if injection is detected based on which score is higher
-        let is_injection = injection_score > safe_score;
+        tracing::debug!("Raw Gondola logits: safe={:.3}, injection={:.3}", safe_logit, injection_logit);
         
-        // Calculate confidence as the difference between the scores, normalized
-        let max_score = safe_score.max(injection_score);
-        let min_score = safe_score.min(injection_score);
-        let confidence = if max_score == min_score {
-            0.5 // Equal scores = uncertain
+        // Apply softmax to convert logits to probabilities
+        // softmax(x_i) = exp(x_i) / sum(exp(x_j))
+        let safe_exp = safe_logit.exp();
+        let injection_exp = injection_logit.exp();
+        let sum_exp = safe_exp + injection_exp;
+        
+        let safe_prob = safe_exp / sum_exp;
+        let injection_prob = injection_exp / sum_exp;
+        
+        tracing::debug!("Softmax probabilities: safe={:.3}, injection={:.3}", safe_prob, injection_prob);
+        
+        // Determine if injection is detected based on which probability is higher
+        let is_injection = injection_prob > safe_prob;
+        
+        // Confidence is the probability of the predicted class
+        let confidence = if is_injection {
+            injection_prob
         } else {
-            // Normalize the difference to 0.5-1.0 range
-            0.5 + ((max_score - min_score) / (max_score.abs() + min_score.abs()).max(1.0)) * 0.5
+            safe_prob
         };
+
+        tracing::debug!("Final result: is_injection={}, confidence={:.3}", is_injection, confidence);
 
         Self {
             is_injection,
-            confidence: confidence.clamp(0.0, 1.0),
+            confidence,
             raw_scores: scores,
         }
     }
@@ -134,6 +147,7 @@ impl GondolaProvider {
         // For now, we'll try without explicit authentication, assuming Trogdor handles it
         // Use a placeholder bearer token that will be handled by Trogdor
         let auth = AuthMethod::BearerToken("".to_string());
+
         let api_client = ApiClient::with_timeout(
             config.endpoint.clone(),
             auth,
@@ -177,7 +191,8 @@ impl GondolaProvider {
             }]
         });
 
-        tracing::debug!("Sending request to Gondola: {}", payload);
+        tracing::debug!("🔒 Sending Gondola request to {}/services/squareup.gondola.service.ModelService/BatchInfer", self.config.endpoint);
+        tracing::debug!("🔒 Request payload: {}", payload);
 
         let response = self
             .api_client
@@ -185,12 +200,15 @@ impl GondolaProvider {
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("Gondola request failed: {}", e)))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        tracing::debug!("🔒 Gondola response status: {}", status);
+
+        if !status.is_success() {
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
+            tracing::error!("🔒 Gondola API error {}: {}", status, error_text);
             return Err(ProviderError::RequestFailed(format!(
                 "Gondola API error {}: {}",
                 status, error_text
@@ -202,14 +220,36 @@ impl GondolaProvider {
             .await
             .map_err(|e| ProviderError::RequestFailed(format!("Failed to read response: {}", e)))?;
 
-        tracing::debug!("Gondola response: {}", response_text);
+        tracing::debug!("🔒 Gondola raw response (length: {}): {}", response_text.len(), response_text);
+
+        // Check if response is empty or whitespace
+        if response_text.trim().is_empty() {
+            return Err(ProviderError::RequestFailed(
+                "Empty response from Gondola".to_string(),
+            ));
+        }
 
         let gondola_response: GondolaBatchInferResponse = serde_json::from_str(&response_text)
-            .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse Gondola response: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!("🔒 Failed to parse Gondola response. Error: {}", e);
+                tracing::error!("🔒 Response text was: '{}'", response_text);
+                ProviderError::RequestFailed(format!("Failed to parse Gondola response: {}", e))
+            })?;
+
+        // Validate we got the expected model and version back
+        if gondola_response.model != self.config.model_name {
+            tracing::warn!("🔒 Expected model '{}' but got '{}'", self.config.model_name, gondola_response.model);
+        }
+        if gondola_response.version != self.config.version {
+            tracing::warn!("🔒 Expected version '{}' but got '{}'", self.config.version, gondola_response.version);
+        }
+
+        tracing::debug!("🔒 Gondola response validated: model={}, version={}, occurred_at={}", 
+                       gondola_response.model, gondola_response.version, gondola_response.occurred_at);
 
         if gondola_response.response_items.is_empty() {
             return Err(ProviderError::RequestFailed(
-                "Empty response from Gondola".to_string(),
+                "No response items from Gondola".to_string(),
             ));
         }
 
@@ -217,6 +257,8 @@ impl GondolaProvider {
             .double_list_value
             .double_values
             .clone();
+
+        tracing::debug!("🔒 Extracted scores from Gondola: {:?}", scores);
 
         Ok(PromptInjectionResult::from_raw_scores(scores))
     }
@@ -263,6 +305,7 @@ impl Provider for GondolaProvider {
                 ConfigKey::new("GONDOLA_MODEL_VERSION", false, false, Some("gmv-zve9abhxe9s7fq1zep5dxd807")),
                 ConfigKey::new("GONDOLA_SOURCE", false, false, Some("admin-test")),
                 ConfigKey::new("GONDOLA_TIMEOUT", false, false, Some("30")),
+
             ],
         )
     }
@@ -297,27 +340,40 @@ mod tests {
 
     #[test]
     fn test_prompt_injection_result_from_scores() {
-        // Test case where injection is detected (injection_score > safe_score)
-        let scores = vec![2.0, 5.0]; // [safe_score, injection_score]
+        // Test case where injection is detected (injection_logit > safe_logit)
+        let scores = vec![2.0, 5.0]; // [safe_logit, injection_logit]
         let result = PromptInjectionResult::from_raw_scores(scores.clone());
         
         assert!(result.is_injection);
-        assert!(result.confidence > 0.5);
+        // With softmax: safe_prob = exp(2)/(exp(2)+exp(5)) ≈ 0.047, injection_prob ≈ 0.953
+        assert!(result.confidence > 0.9);
         assert_eq!(result.raw_scores, scores);
 
-        // Test case where no injection is detected (safe_score > injection_score)
-        let scores = vec![5.0, 2.0]; // [safe_score, injection_score]
+        // Test case where no injection is detected (safe_logit > injection_logit)
+        let scores = vec![5.0, 2.0]; // [safe_logit, injection_logit]
         let result = PromptInjectionResult::from_raw_scores(scores.clone());
         
         assert!(!result.is_injection);
-        assert!(result.confidence > 0.5);
+        // With softmax: safe_prob ≈ 0.953, injection_prob ≈ 0.047
+        assert!(result.confidence > 0.9);
         assert_eq!(result.raw_scores, scores);
 
-        // Test case with equal scores (uncertain)
+        // Test case with equal logits (uncertain)
         let scores = vec![3.0, 3.0];
         let result = PromptInjectionResult::from_raw_scores(scores.clone());
         
-        assert_eq!(result.confidence, 0.5);
+        // With equal logits, softmax gives 0.5 probability for each class
+        assert!((result.confidence - 0.5).abs() < 0.001);
+        assert_eq!(result.raw_scores, scores);
+
+        // Test with your actual example from the curl output
+        let scores = vec![5.977328300476074, -6.504494667053223]; // [safe_logit, injection_logit]
+        let result = PromptInjectionResult::from_raw_scores(scores.clone());
+        
+        // Safe logit is much higher than injection logit, so should be classified as safe
+        assert!(!result.is_injection);
+        // Should have very high confidence in the safe classification
+        assert!(result.confidence > 0.99);
         assert_eq!(result.raw_scores, scores);
     }
 
