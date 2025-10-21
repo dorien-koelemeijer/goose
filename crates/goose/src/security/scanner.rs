@@ -1,5 +1,6 @@
 use crate::conversation::message::Message;
 use crate::security::patterns::{PatternMatcher, RiskLevel};
+use crate::security::model_scanner::{GenericModelScanner, ModelScanner};
 use anyhow::Result;
 use rmcp::model::CallToolRequestParam;
 use serde_json::Value;
@@ -98,7 +99,7 @@ impl PromptInjectionScanner {
         self.scan_for_dangerous_patterns(text).await
     }
 
-    /// Core scanning logic - tries Gondola BERT model first, falls back to pattern matching
+    /// Core scanning logic - tries model-based scanning first, falls back to pattern matching
     pub async fn scan_for_dangerous_patterns(&self, text: &str) -> Result<ScanResult> {
         tracing::info!("🔒 Starting security scan for text (length: {})", text.len());
         
@@ -107,17 +108,25 @@ impl PromptInjectionScanner {
         
         // Try to get Gondola provider for ML-based scanning
         if let Some(gondola_provider) = get_gondola_provider().await {
-            tracing::info!("🔒 Gondola provider available, running BERT model scan...");
+            tracing::info!("🔒 Model scanner available, running generic model scan...");
             
-            match gondola_provider.scan_for_prompt_injection(text).await {
-                Ok(gondola_result) => {
+            // Use the generic model scanner instead of calling Gondola directly
+            match GenericModelScanner::scan_for_prompt_injection(gondola_provider.as_ref(), text).await {
+                Ok(model_result) => {
                     tracing::info!(
-                        "🔒 Gondola scan completed: is_injection={}, confidence={:.3}",
-                        gondola_result.is_injection,
-                        gondola_result.confidence
+                        "🔒 Model scan completed: is_injection={}, confidence={:.3}",
+                        model_result.is_injection,
+                        model_result.confidence
                     );
                     
-                    // Combine Gondola and pattern results
+                    // Convert ModelScanResult to PromptInjectionResult for compatibility
+                    let gondola_result = PromptInjectionResult {
+                        is_injection: model_result.is_injection,
+                        confidence: model_result.confidence,
+                        raw_scores: model_result.raw_scores,
+                    };
+                    
+                    // Combine model and pattern results
                     let combined_result = self.combine_scan_results(&pattern_result, &gondola_result);
                     
                     tracing::info!(
@@ -129,12 +138,12 @@ impl PromptInjectionScanner {
                     return Ok(combined_result);
                 }
                 Err(e) => {
-                    tracing::warn!("🔒 Gondola scan failed, falling back to pattern-only: {}", e);
+                    tracing::warn!("🔒 Model scan failed, falling back to pattern-only: {}", e);
                     // Fall through to pattern-only result
                 }
             }
         } else {
-            tracing::info!("🔒 Gondola provider not available, using pattern-based scanning only");
+            tracing::info!("🔒 Model scanner not available, using pattern-based scanning only");
         }
         
         Ok(pattern_result)

@@ -8,6 +8,7 @@ use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata, ProviderUsag
 use super::errors::ProviderError;
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
+use crate::security::model_scanner::{ModelScanner, ModelScanResult};
 use rmcp::model::Tool;
 
 /// Configuration for a Gondola BERT model
@@ -286,6 +287,40 @@ impl GondolaProvider {
             Ok(response) => response.status().is_success(),
             Err(_) => false,
         }
+    }
+}
+
+#[async_trait]
+impl ModelScanner for GondolaProvider {
+    async fn scan_text(&self, text: &str) -> Result<ModelScanResult, ProviderError> {
+        let result = self.scan_for_prompt_injection(text).await?;
+        
+        // Convert PromptInjectionResult to ModelScanResult
+        let metadata = serde_json::json!({
+            "model": self.config.model_name,
+            "version": self.config.version,
+            "source": self.config.source,
+            "endpoint": self.config.endpoint
+        });
+        
+        Ok(ModelScanResult::with_metadata(
+            result.is_injection,
+            result.confidence,
+            result.raw_scores,
+            metadata,
+        ))
+    }
+    
+    async fn is_available(&self) -> bool {
+        self.is_available().await
+    }
+    
+    fn model_name(&self) -> &str {
+        &self.config.model_name
+    }
+    
+    fn model_version(&self) -> Option<&str> {
+        Some(&self.config.version)
     }
 }
 
