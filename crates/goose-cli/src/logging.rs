@@ -114,6 +114,14 @@ fn setup_logging_internal(
                             .boxed(),
                     );
                 }
+
+                if let Ok(otlp_logs_layer) = otlp_layer::create_otlp_logs_layer() {
+                    layers.push(
+                        otlp_logs_layer
+                            .with_filter(otlp_layer::create_otlp_logs_filter())
+                            .boxed(),
+                    );
+                }
             }
 
             if let Some(langfuse) = langfuse_layer::create_langfuse_observer() {

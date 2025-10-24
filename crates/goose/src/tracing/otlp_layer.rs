@@ -1,12 +1,18 @@
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{global, KeyValue};
+use opentelemetry_appender_tracing2::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::logs::{Logger, LoggerProvider};
 use opentelemetry_sdk::trace::{self, RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{runtime, Resource};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{Level, Metadata};
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::filter::FilterFn;
+
+// TODO: figure out if this can be done differently
+static LOGGER_PROVIDER: OnceLock<LoggerProvider> = OnceLock::new();
 
 pub type OtlpTracingLayer =
     OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry_sdk::trace::Tracer>;
@@ -163,6 +169,31 @@ pub fn create_otlp_metrics_layer() -> OtlpResult<OtlpMetricsLayer> {
     Ok(tracing_opentelemetry::MetricsLayer::new(meter_provider))
 }
 
+pub fn create_otlp_logs_layer() -> OtlpResult<OpenTelemetryTracingBridge<LoggerProvider, Logger>> {
+    let config = OtlpConfig::from_config().ok_or("OTEL_EXPORTER_OTLP_ENDPOINT not configured")?;
+
+    let resource = Resource::new(vec![
+        KeyValue::new("service.name", "goose"),
+        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+        KeyValue::new("service.namespace", "goose"),
+    ]);
+
+    let exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_http()
+        .with_endpoint(&config.endpoint)
+        .with_timeout(config.timeout)
+        .build()?;
+
+    let logger_provider = LoggerProvider::builder()
+        .with_batch_exporter(exporter, runtime::Tokio)
+        .with_resource(resource)
+        .build();
+
+    let provider = LOGGER_PROVIDER.get_or_init(|| logger_provider);
+
+    Ok(OpenTelemetryTracingBridge::new(provider))
+}
+
 pub fn init_otlp() -> OtlpResult<OtlpLayers> {
     let tracing_layer = create_otlp_tracing_layer()?;
     let metrics_layer = create_otlp_metrics_layer()?;
@@ -218,6 +249,13 @@ pub fn create_otlp_metrics_filter() -> FilterFn<impl Fn(&Metadata<'_>) -> bool> 
         }
 
         false
+    })
+}
+
+/// Creates a custom filter for OTLP logs that captures only ERROR and WARN levels
+pub fn create_otlp_logs_filter() -> FilterFn<impl Fn(&Metadata<'_>) -> bool> {
+    FilterFn::new(|metadata: &Metadata<'_>| {
+        matches!(metadata.level(), &Level::ERROR | &Level::WARN)
     })
 }
 
