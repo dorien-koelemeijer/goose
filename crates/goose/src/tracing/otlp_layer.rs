@@ -17,7 +17,8 @@ static LOGGER_PROVIDER: OnceLock<LoggerProvider> = OnceLock::new();
 pub type OtlpTracingLayer =
     OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry_sdk::trace::Tracer>;
 pub type OtlpMetricsLayer = MetricsLayer<tracing_subscriber::Registry>;
-pub type OtlpLayers = (OtlpTracingLayer, OtlpMetricsLayer);
+pub type OtlpLogsLayer = OpenTelemetryTracingBridge<LoggerProvider, Logger>;
+pub type OtlpLayers = (OtlpTracingLayer, OtlpMetricsLayer, OtlpLogsLayer);
 pub type OtlpResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Debug, Clone)]
@@ -197,7 +198,8 @@ pub fn create_otlp_logs_layer() -> OtlpResult<OpenTelemetryTracingBridge<LoggerP
 pub fn init_otlp() -> OtlpResult<OtlpLayers> {
     let tracing_layer = create_otlp_tracing_layer()?;
     let metrics_layer = create_otlp_metrics_layer()?;
-    Ok((tracing_layer, metrics_layer))
+    let logs_layer = create_otlp_logs_layer()?;
+    Ok((tracing_layer, metrics_layer, logs_layer))
 }
 
 pub fn init_otlp_tracing_only() -> OtlpResult<OtlpTracingLayer> {
