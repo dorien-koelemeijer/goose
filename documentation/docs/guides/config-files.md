@@ -29,7 +29,7 @@ The following settings can be configured at the root level of your config.yaml f
 | `GOOSE_PROVIDER` | Primary [LLM provider](/docs/getting-started/providers) | "anthropic", "openai", etc. | None | Yes |
 | `GOOSE_MODEL` | Default model to use | Model name (e.g., "claude-3.5-sonnet", "gpt-4") | None | Yes |
 | `GOOSE_TEMPERATURE` | Model response randomness | Float between 0.0 and 1.0 | Model-specific | No |
-| `GOOSE_MODE` | [Tool execution behavior](/docs/guides/goose-permissions) | "auto", "approve", "chat", "smart_approve" | "smart_approve" | No |
+| `GOOSE_MODE` | [Tool execution behavior](/docs/guides/goose-permissions) | "auto", "approve", "chat", "smart_approve" | "auto" | No |
 | `GOOSE_MAX_TURNS` | [Maximum number of turns](/docs/guides/sessions/smart-context-management#maximum-turns) allowed without user input | Integer (e.g., 10, 50, 100) | 1000 | No |
 | `GOOSE_LEAD_PROVIDER` | Provider for lead model in [lead/worker mode](/docs/guides/environment-variables#leadworker-model-configuration) | Same as `GOOSE_PROVIDER` options | Falls back to `GOOSE_PROVIDER` | No |
 | `GOOSE_LEAD_MODEL` | Lead model for lead/worker mode | Model name | None | No |
@@ -47,8 +47,8 @@ The following settings can be configured at the root level of your config.yaml f
 | `otel_exporter_otlp_timeout` | Export timeout in milliseconds for [observability](/docs/guides/environment-variables#opentelemetry-protocol-otlp) | Integer (ms) | 10000 | No |
 | `SECURITY_PROMPT_ENABLED` | Enable prompt injection detection to identify potentially harmful commands | true/false | false | No |
 | `SECURITY_PROMPT_THRESHOLD` | Sensitivity threshold for prompt injection detection (higher = stricter) | Float between 0.01 and 1.0 | 0.7 | No |
-| `SECURITY_PROMPT_ML_ENABLED` | Enable ML-based prompt injection detection for advanced threat identification | true/false | false | No |
-| `SECURITY_PROMPT_ML_MODEL` | Specify the BERT ML model to use for prompt injection detection | String | "ProtectAI DeBERTa" | No |
+| `SECURITY_PROMPT_BERT_ENABLED` | Enable ML-based prompt injection detection for advanced threat identification | true/false | false | No |
+| `SECURITY_PROMPT_BERT_MODEL` | Specify the BERT ML model to use for prompt injection detection | String | "ProtectAI DeBERTa" | No |
 
 :::info Automatic Multi-Model Configuration
 The experimental [AutoPilot](/docs/guides/multi-model/autopilot) feature provides intelligent, context-aware model switching. Configure models for different roles using the `x-advanced-models` setting.
