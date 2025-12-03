@@ -3,6 +3,7 @@ pub mod patterns;
 pub mod prompt_ml_detector;
 pub mod scanner;
 pub mod security_inspector;
+pub mod tool_call_ml_detector;
 
 use crate::config::Config;
 use crate::conversation::message::{Message, ToolRequest};

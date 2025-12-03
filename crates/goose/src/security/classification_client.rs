@@ -170,9 +170,9 @@ impl ClassificationClient {
             })
             .context("Classification API returned no labels")?;
 
-        let injection_score = match top_label.label.as_str() {
-            "INJECTION" | "LABEL_1" => top_label.score,
-            "SAFE" | "LABEL_0" => 1.0 - top_label.score,
+        let injection_score = match top_label.label.to_lowercase().as_str() {
+            "injection" | "label_1" | "risky" => top_label.score,
+            "safe" | "label_0" => 1.0 - top_label.score,
             _ => {
                 tracing::warn!(
                     label = %top_label.label,

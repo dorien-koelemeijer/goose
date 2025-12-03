@@ -1,6 +1,7 @@
 use crate::conversation::message::Message;
 use crate::security::patterns::{PatternMatch, PatternMatcher};
 use crate::security::prompt_ml_detector::MlDetector;
+use crate::security::tool_call_ml_detector::ToolCallMlDetector;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use rmcp::model::CallToolRequestParam;
@@ -24,6 +25,7 @@ struct DetailedScanResult {
 pub struct PromptInjectionScanner {
     pattern_matcher: PatternMatcher,
     ml_detector: Option<MlDetector>,
+    tool_call_detector: Option<ToolCallMlDetector>,
 }
 
 impl PromptInjectionScanner {
@@ -31,14 +33,32 @@ impl PromptInjectionScanner {
         Self {
             pattern_matcher: PatternMatcher::new(),
             ml_detector: None,
+            tool_call_detector: None,
         }
     }
 
     pub fn with_ml_detection() -> Result<Self> {
         let ml_detector = MlDetector::new_from_config()?;
+
+        // Try to initialize tool call detector (bashcat model)
+        let tool_call_detector = match ToolCallMlDetector::new_from_config() {
+            Ok(detector) => {
+                tracing::info!("✅ Tool call ML detector (bashcat) initialized successfully");
+                Some(detector)
+            }
+            Err(e) => {
+                tracing::info!(
+                    "ℹ️ Tool call ML detector not configured: {}. Will use pattern matching for tool calls.",
+                    e
+                );
+                None
+            }
+        };
+
         Ok(Self {
             pattern_matcher: PatternMatcher::new(),
             ml_detector: Some(ml_detector),
+            tool_call_detector,
         })
     }
 
@@ -85,15 +105,95 @@ impl PromptInjectionScanner {
     }
 
     async fn analyze_text(&self, text: &str) -> Result<DetailedScanResult> {
-        let (pattern_confidence, pattern_matches) = self.pattern_based_scanning(text);
-        let ml_confidence = self.scan_with_ml(text).await;
-        let confidence = ml_confidence.unwrap_or(0.0).max(pattern_confidence);
+        // Try to extract shell command from tool call
+        let command = self.extract_shell_command(text);
+
+        // If we have a tool call detector (bashcat) and this looks like a shell command, use it
+        let tool_call_ml_confidence =
+            if let (Some(detector), Some(cmd)) = (&self.tool_call_detector, &command) {
+                tracing::info!("🔍 Using bashcat model to scan shell command: {:?}", cmd);
+                match detector.scan_command(&cmd).await {
+                    Ok(score) => {
+                        tracing::info!("🎯 Bashcat score: {:.3}", score);
+                        Some(score)
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️ Bashcat scan failed: {:#}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+        // Fallback to pattern matching if bashcat not available or failed
+        let (pattern_confidence, pattern_matches) = if tool_call_ml_confidence.is_none() {
+            tracing::debug!("Using pattern-based scanning as fallback");
+            self.pattern_based_scanning(text)
+        } else {
+            (0.0, Vec::new())
+        };
+
+        // Use the highest confidence score
+        let confidence = tool_call_ml_confidence
+            .unwrap_or(0.0)
+            .max(pattern_confidence);
 
         Ok(DetailedScanResult {
             confidence,
             pattern_matches,
-            ml_confidence,
+            ml_confidence: tool_call_ml_confidence,
         })
+    }
+
+    /// Extract shell command from tool call JSON if present
+    fn extract_shell_command(&self, text: &str) -> Option<String> {
+        // Try to parse as JSON first to properly handle escaped characters
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+            if let Some(command) = json.get("command").and_then(|v| v.as_str()) {
+                return Some(command.to_string());
+            }
+        }
+
+        // Fallback: manual parsing for "command": "..." pattern
+        // This handles cases where text might not be valid JSON but contains the pattern
+        if let Some(start) = text.find(r#""command":"#) {
+            let after_key = &text[start + r#""command":"#.len()..];
+            if let Some(quote_start) = after_key.find('"') {
+                let command_start = &after_key[quote_start + 1..];
+                
+                // Find the closing quote, handling escaped quotes
+                let mut result = String::new();
+                let mut chars = command_start.chars();
+                let mut escaped = false;
+                
+                while let Some(ch) = chars.next() {
+                    if escaped {
+                        // Handle common escape sequences
+                        match ch {
+                            'n' => result.push('\n'),
+                            't' => result.push('\t'),
+                            'r' => result.push('\r'),
+                            '\\' => result.push('\\'),
+                            '"' => result.push('"'),
+                            _ => {
+                                result.push('\\');
+                                result.push(ch);
+                            }
+                        }
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == '"' {
+                        // Found unescaped closing quote
+                        return Some(result);
+                    } else {
+                        result.push(ch);
+                    }
+                }
+            }
+        }
+        None
     }
 
     async fn scan_conversation(&self, messages: &[Message]) -> Result<DetailedScanResult> {
